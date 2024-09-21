@@ -29,7 +29,7 @@ from torchvision import transforms
 import cv2
 import random
 import os.path as osp
-from utils import one_hot2dist
+from RITnet.utils import one_hot2dist
 import copy
 
 transform = transforms.Compose(
