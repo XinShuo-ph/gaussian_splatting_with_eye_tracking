@@ -29,7 +29,7 @@ parser.add_argument("--skip_test", action="store_true")
 parser.add_argument("--quiet", action="store_true")
 args = get_combined_args(parser)
 
-prune_distance = 10.0 # prune points that are further than this distance from the camera center
+prune_distance = 5.0 # prune points that are further than this distance from the camera center
 camera_idx = 0 # idx in all cameras
 
 
@@ -46,15 +46,14 @@ pts = gaussians._xyz.cpu().detach().numpy()
 mytree = cKDTree(pts)
 
 
-# prune points by distance
-# from a camera center
+# prune points by distance from a camera center
 view = scene.getTrainCameras()[0]
 mycenter = view.camera_center.cpu().detach().numpy()
 
 subsetidxs = mytree.query_ball_point(mycenter, prune_distance)
-subsetpts = pts[subsetidxs]
-print("using %d points out of %d" % (len(subsetpts), len(pts)))
-gaussians._xyz = torch.tensor(subsetpts, dtype=torch.float32, device="cuda")
+
+print("using %d points out of %d" % (len(subsetidxs), len(pts)))
+gaussians._xyz = gaussians._xyz[subsetidxs]
 gaussians._opacity = gaussians._opacity[subsetidxs]
 gaussians._features_dc = gaussians._features_dc[subsetidxs]
 gaussians._features_rest = gaussians._features_rest[subsetidxs]
