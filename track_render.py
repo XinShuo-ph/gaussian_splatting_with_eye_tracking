@@ -25,7 +25,8 @@ from tqdm import tqdm
 from RITnet.utils import get_predictions
 from render import *
 
-# arguments
+# 0. arguments
+
 parser = ArgumentParser(description="Testing script parameters")
 splat_model = ModelParams(parser, sentinel=True)
 pipeline = PipelineParams(parser)
