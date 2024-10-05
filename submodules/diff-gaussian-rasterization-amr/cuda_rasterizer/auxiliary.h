@@ -16,7 +16,9 @@
 #include "stdio.h"
 
 #define BLOCK_SIZE (BLOCK_X * BLOCK_Y)
-#define NUM_WARPS (BLOCK_SIZE/32)
+#define RENDER_BLOCK_SIZE (RENDER_BLOCK_X * RENDER_BLOCK_Y)
+// #define NUM_WARPS (BLOCK_SIZE/32)
+#define NUM_WARPS (RENDER_BLOCK_SIZE / 32)
 
 // Spherical harmonics coefficients
 __device__ const float SH_C0 = 0.28209479177387814f;

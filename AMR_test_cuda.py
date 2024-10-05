@@ -48,3 +48,4 @@ mask = reds == 0
 print("Skipped pixels: ", np.sum(mask))
 print("Total pixels: ", mask.size)
 
+# record the ranges for each tile, i.e. the number of intersections and plot them here, to try a better AMR criterion

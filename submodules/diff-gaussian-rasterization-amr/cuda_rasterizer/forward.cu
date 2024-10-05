@@ -259,7 +259,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
 template <uint32_t CHANNELS>
-__global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
+__global__ void __launch_bounds__(RENDER_BLOCK_X * RENDER_BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
@@ -279,7 +279,7 @@ renderCUDA(
 	uint2 pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };
 	uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
 	// thread_index identifies the pixel on the block
-	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
+	uint2 pix = { pix_min.x + block.thread_index().x*RENDER_BLOCK_RATIO, pix_min.y + block.thread_index().y*RENDER_BLOCK_RATIO };
 	uint32_t pix_id = W * pix.y + pix.x;
 	float2 pixf = { (float)pix.x, (float)pix.y };
 
@@ -290,22 +290,29 @@ renderCUDA(
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
-	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
+	const int rounds = ((range.y - range.x + RENDER_BLOCK_SIZE - 1) / RENDER_BLOCK_SIZE);
 	int toDo = range.y - range.x;
 
-	// number of intersections is just toDo, based on the num of intersections, determine the AMR level
-	int AMR_level = static_cast<int>(floor(0.75*log10f(toDo + 1))) + 1;
-	if (AMR_level > TILE_LEVEL)
-		AMR_level = TILE_LEVEL;
-	int AMR_step = 1 << (TILE_LEVEL - AMR_level);
-	bool is_accurate_point = (block.thread_index().x % AMR_step == 0) && (block.thread_index().y % AMR_step == 0);
-	// if not accurate point, skip
-	done = done || !is_accurate_point;
+	// maybe try to save and output the interesection number to python for visualization
+
+	// // number of intersections is just toDo, based on the num of intersections, determine the AMR level
+	// int AMR_level = static_cast<int>(floor(0.75*log10f(toDo + 1))) + 1;
+	// if (AMR_level > TILE_LEVEL)
+	// 	AMR_level = TILE_LEVEL;
+	// int AMR_step = 1 << (TILE_LEVEL - AMR_level);
+	// bool is_accurate_point = (block.thread_index().x % AMR_step == 0) && (block.thread_index().y % AMR_step == 0);
+	// // if not accurate point, skip
+	// done = done || !is_accurate_point;
+
+	int AMR_round = 0; // the round of AMR level 0,...,AMR_MAX_LEVELS-1
+
+	// for(AMR_round = 0; AMR_round < AMR_MAX_LEVELS; AMR_round++)
+	
 
 	// Allocate storage for batches of collectively fetched data.
-	__shared__ int collected_id[BLOCK_SIZE];
-	__shared__ float2 collected_xy[BLOCK_SIZE];
-	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
+	__shared__ int collected_id[RENDER_BLOCK_SIZE];
+	__shared__ float2 collected_xy[RENDER_BLOCK_SIZE];
+	__shared__ float4 collected_conic_opacity[RENDER_BLOCK_SIZE];
 
 	// Initialize helper variables
 	float T = 1.0f;
@@ -314,15 +321,15 @@ renderCUDA(
 	float C[CHANNELS] = { 0 };
 
 	// Iterate over batches until all done or range is complete
-	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
+	for (int i = 0; i < rounds; i++, toDo -= RENDER_BLOCK_SIZE)
 	{
 		// End if entire block votes that it is done rasterizing
 		int num_done = __syncthreads_count(done);
-		if (num_done == BLOCK_SIZE)
+		if (num_done == RENDER_BLOCK_SIZE)
 			break;
 
 		// Collectively fetch per-Gaussian data from global to shared
-		int progress = i * BLOCK_SIZE + block.thread_rank();
+		int progress = i * RENDER_BLOCK_SIZE + block.thread_rank();
 		if (range.x + progress < range.y)
 		{
 			int coll_id = point_list[range.x + progress];
@@ -333,7 +340,7 @@ renderCUDA(
 		block.sync();
 
 		// Iterate over current batch
-		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
+		for (int j = 0; !done && j < min(RENDER_BLOCK_SIZE, toDo); j++)
 		{
 			// Keep track of current position in range
 			contributor++;
@@ -385,7 +392,7 @@ renderCUDA(
 }
 
 void FORWARD::render(
-	const dim3 grid, dim3 block,
+	const dim3 grid, dim3 block_for_render,
 	const uint2* ranges,
 	const uint32_t* point_list,
 	int W, int H,
@@ -397,7 +404,7 @@ void FORWARD::render(
 	const float* bg_color,
 	float* out_color)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
+	renderCUDA<NUM_CHANNELS> << <grid, block_for_render >> > (
 		ranges,
 		point_list,
 		W, H,

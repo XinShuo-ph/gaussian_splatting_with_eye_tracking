@@ -233,6 +233,7 @@ int CudaRasterizer::Rasterizer::forward(
 
 	dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);
 	dim3 block(BLOCK_X, BLOCK_Y, 1);
+	dim3 block_for_render(RENDER_BLOCK_X, RENDER_BLOCK_Y, 1);
 
 	// Dynamically resize image-based auxiliary buffers during training
 	size_t img_chunk_size = required<ImageState>(width * height);
@@ -320,7 +321,7 @@ int CudaRasterizer::Rasterizer::forward(
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
 	CHECK_CUDA(FORWARD::render(
-		tile_grid, block,
+		tile_grid, block_for_render,
 		imgState.ranges,
 		binningState.point_list,
 		width, height,
@@ -382,6 +383,7 @@ void CudaRasterizer::Rasterizer::backward(
 
 	const dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);
 	const dim3 block(BLOCK_X, BLOCK_Y, 1);
+	const dim3 block_for_render(RENDER_BLOCK_X, RENDER_BLOCK_Y, 1);
 
 	// Compute loss gradients w.r.t. 2D mean position, conic matrix,
 	// opacity and RGB of Gaussians from per-pixel loss gradients.
@@ -389,7 +391,7 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* color_ptr = (colors_precomp != nullptr) ? colors_precomp : geomState.rgb;
 	CHECK_CUDA(BACKWARD::render(
 		tile_grid,
-		block,
+		block_for_render,
 		imgState.ranges,
 		binningState.point_list,
 		width, height,

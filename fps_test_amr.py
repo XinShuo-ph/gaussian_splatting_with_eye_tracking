@@ -77,7 +77,7 @@ plt.legend()
 plt.savefig('fps_benchmark_amr.png')
 
 plt.figure()
-plt.plot(pix_horizon, fps_avg, 'bo-',label = 'model: 3DGS_AMR\nmachine: T4')
+plt.plot(pix_horizon, fps_avg, 'bo-',label = 'model: 3DGS|tile=32$^2$\nmachine: T4')
 plt.plot(np.linspace(800,4000,100), 1.5e8/np.linspace(800,4000,100)**2, 'k--',label = '$y\\propto x^{-2}$')
 plt.plot(np.linspace(800,4000,100), 7e4/np.linspace(800,4000,100), 'b--',label = '$y\\propto x^{-1}$')
 plt.xlabel('Horizontal Pixels')
