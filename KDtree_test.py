@@ -29,7 +29,7 @@ parser.add_argument("--skip_test", action="store_true")
 parser.add_argument("--quiet", action="store_true")
 args = get_combined_args(parser)
 
-prune_distance = 5.0 # prune points that are further than this distance from the camera center
+prune_distance = 7.0 # prune points that are further than this distance from the camera center
 camera_idx = 0 # idx in all cameras
 
 
