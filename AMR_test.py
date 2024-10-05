@@ -27,7 +27,10 @@ from gaussian_renderer import GaussianModel
 tile_level = 4 # 2^tile_level is the number of pixels in a tile
 # coarse_level = 3 # 2^coarse_level is the number of acurate pixels in a coarse pixel
 camera_idx = 0 # idx in all cameras
-AMR_factor = 1.2 # the factor to determine the AMR level, the higher the factor, the higher the AMR level overall
+AMR_factor = 1.5 # the factor to determine the AMR level, the higher the factor, the higher the AMR level overall
+pix_x = 1920
+pix_y = 1080 # override the image size
+
 
 # same args as render.py
 parser = ArgumentParser(description="Testing script parameters")
@@ -45,7 +48,10 @@ mydataset = model.extract(args)
 # render the acurate image for reference
 gaussians = GaussianModel(mydataset.sh_degree) # create an empty gaussian model
 scene = Scene(mydataset, gaussians, load_iteration=args.iteration, shuffle=False) # load the model and cameras
-view = scene.getTrainCameras()[camera_idx]
+view = scene.getTrainCameras()[camera_idx]    
+if pix_x>0 and pix_y>0:
+    view.image_width = int(pix_x)
+    view.image_height = int(pix_y)
 bg_color = [1,1,1] if mydataset.white_background else [0, 0, 0]
 background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 rendering = render(view, gaussians, pipeline, background)["render"]
@@ -193,7 +199,7 @@ plt.figure().set_size_inches(10,6)
 plt.imshow(rendering.cpu().detach().numpy().transpose(1,2,0))
 
 # Overlay the tile count image with transparency and log scale
-plt.imshow(np.log10(tile_count_image), cmap='jet',  alpha=0.5)
+plt.imshow(np.log10(tile_count_image+1), cmap='jet',  alpha=0.5)
 
 
 # Add colorbar to show the scale of gaussian counts
