@@ -33,8 +33,8 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-// save 4 intermediate quantities now
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> ParseBuffers(
+// save 5 intermediate quantities now
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> ParseBuffers(
     const torch::Tensor& geomBuffer,
     const torch::Tensor& binningBuffer,
     const torch::Tensor& imgBuffer,
@@ -51,17 +51,19 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> ParseBuff
     // Create tensors from the parsed data
     torch::Tensor means2D = torch::from_blob(geom.means2D, {P, 2}, geomBuffer.options().dtype(torch::kFloat32));
     torch::Tensor conic_opacity = torch::from_blob(geom.conic_opacity, {P, 4}, geomBuffer.options().dtype(torch::kFloat32));
+    torch::Tensor geom_rgb = torch::from_blob(geom.rgb, {P*3}, geomBuffer.options().dtype(torch::kFloat32));
     torch::Tensor point_list = torch::from_blob(binning.point_list, {P}, binningBuffer.options().dtype(torch::kInt32));
 	int grid_x = (width + BLOCK_X - 1) / BLOCK_X;
 	int grid_y =  (height + BLOCK_Y - 1) / BLOCK_Y;
     torch::Tensor ranges = torch::from_blob(img.ranges, {grid_x*grid_y, 2}, imgBuffer.options().dtype(torch::kInt32));
+    torch::Tensor tile_AMR_levels = torch::from_blob(img.tile_AMR_levels, {grid_x*grid_y}, imgBuffer.options().dtype(torch::kInt32));
 
-    return std::make_tuple(means2D, conic_opacity, point_list, ranges);
+    return std::make_tuple(means2D, conic_opacity, geom_rgb, point_list, ranges, tile_AMR_levels);
 }
 
 // one int for rendered, one tensor for out_color, one tensor for radii, 
-//  4 tensors for the intermediate quantities, and 3 tensors for buffers
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+//  6 tensors for the intermediate quantities, and 3 tensors for buffers
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -81,10 +83,27 @@ RasterizeGaussiansCUDA(
 	const int degree,
 	const torch::Tensor& campos,
 	const bool prefiltered,
+	const int foveaStep, // =-1 means no foveation, =0,1,2,3 corresponds to progressively higher quality
+	const torch::Tensor& out_color_precomp, // precomputed color (from last step)
+	const torch::Tensor& radii_precomp, // precomputed radii
+	const torch::Tensor& means2D_precomp, // precomputed means2D 
+	const torch::Tensor& conic_opacity_precomp, // precomputed conic_opacity
+	const torch::Tensor& geom_rgb_precomp, // precomputed geom_rgb
+	const torch::Tensor& point_list_precomp, // precomputed point_list
+	const torch::Tensor& ranges_precomp, // precomputed ranges
+	const torch::Tensor& tile_AMR_levels_last, // AMR levels of the last step
+	const torch::Tensor& tile_AMR_levels_current, // AMR levels of the current step
+	const torch::Tensor& geomBuffer_precomp, // pass the buffer, this this can work, we do not need things above
+	const torch::Tensor& binningBuffer_precomp,
+	const torch::Tensor& imageBuffer_precomp,
 	const bool debug)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
+  }
+
+  if (debug) {
+	std::cout << "RasterizeGaussiansCUDA" << std::endl;
   }
   
   const int P = means3D.size(0);
@@ -114,7 +133,9 @@ RasterizeGaussiansCUDA(
 	  {
 		M = sh.size(1);
       }
-
+		if (debug) {
+			std::cout << "RasterizeGaussiansCUDA: forward" << std::endl;
+		}
 	  rendered = CudaRasterizer::Rasterizer::forward(
 	    geomFunc,
 		binningFunc,
@@ -136,14 +157,27 @@ RasterizeGaussiansCUDA(
 		tan_fovx,
 		tan_fovy,
 		prefiltered,
+		foveaStep,
+		out_color_precomp.contiguous().data<float>(),
+		radii_precomp.contiguous().data<int>(),
+		means2D_precomp.contiguous().data<float>(),
+		conic_opacity_precomp.contiguous().data<float>(),
+		geom_rgb_precomp.contiguous().data<float>(),
+		point_list_precomp.contiguous().data<int>(),
+		ranges_precomp.contiguous().data<int>(),
+		tile_AMR_levels_last.contiguous().data<int>(),
+		tile_AMR_levels_current.contiguous().data<int>(),
+		reinterpret_cast<char*>(geomBuffer_precomp.contiguous().data_ptr()),
+		reinterpret_cast<char*>(binningBuffer_precomp.contiguous().data_ptr()),
+		reinterpret_cast<char*>(imageBuffer_precomp.contiguous().data_ptr()),
 		out_color.contiguous().data<float>(),
 		radii.contiguous().data<int>(),
 		debug);
   }
 //   return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer);
 	
-	auto [parsed_means2D, parsed_conic_opacity, parsed_point_list, parsed_ranges] = ParseBuffers(geomBuffer, binningBuffer, imgBuffer, P, W, H);
-	return std::make_tuple(rendered, out_color, radii, parsed_means2D, parsed_conic_opacity, parsed_point_list, parsed_ranges, geomBuffer, binningBuffer, imgBuffer);
+	auto [parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels] = ParseBuffers(geomBuffer, binningBuffer, imgBuffer, P, W, H);
+	return std::make_tuple(rendered, out_color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>

@@ -48,6 +48,11 @@ namespace CudaRasterizer
 		uint2* ranges;
 		uint32_t* n_contrib;
 		float* accum_alpha;
+		// added for AMR and debug purposes
+		uint32_t* n_intersections;
+		uint32_t* n_intersections_sorted;
+		uint32_t* tile_AMR_levels;
+		uint32_t* tile_AMR_levels_last;
 
 		static ImageState fromChunk(char*& chunk, size_t N);
 	};

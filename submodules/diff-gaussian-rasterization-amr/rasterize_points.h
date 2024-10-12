@@ -14,8 +14,8 @@
 #include <cstdio>
 #include <tuple>
 #include <string>
-	
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, int>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -35,6 +35,19 @@ RasterizeGaussiansCUDA(
 	const int degree,
 	const torch::Tensor& campos,
 	const bool prefiltered,
+	const int foveaStep, // =-1 means no foveation, =0,1,2,3 corresponds to progressively higher quality
+	const torch::Tensor& out_color_precomp, // precomputed color (from last step)
+	const torch::Tensor& radii_precomp, // precomputed radii
+	const torch::Tensor& means2D_precomp, // precomputed means2D 
+	const torch::Tensor& conic_opacity_precomp, // precomputed conic_opacity
+	const torch::Tensor& geom_rgb_precomp, // precomputed geom_rgb
+	const torch::Tensor& point_list_precomp, // precomputed point_list
+	const torch::Tensor& ranges_precomp, // precomputed ranges
+	const torch::Tensor& tile_AMR_levels_last, // AMR levels of the last step
+	const torch::Tensor& tile_AMR_levels_current, // AMR levels of the current step
+	const torch::Tensor& geomBuffer_precomp, // pass the buffer, this this can work, we do not need things above
+	const torch::Tensor& binningBuffer_precomp,
+	const torch::Tensor& imageBuffer_precomp,
 	const bool debug);
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>

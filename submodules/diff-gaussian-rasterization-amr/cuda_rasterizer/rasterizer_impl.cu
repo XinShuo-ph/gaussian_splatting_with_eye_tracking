@@ -177,6 +177,66 @@ T calculateAMRbyPercentileRadixSort(T* d_array, int size, float percentile, void
     return result;
 }
 
+// Kernel to calculate n_intersections
+__global__ void calculateIntersections(uint2* ranges, uint32_t* n_intersections, int num_tiles)
+{
+	auto idx = cg::this_grid().thread_rank();
+	if (idx < num_tiles)
+	{
+		n_intersections[idx] = ranges[idx].y - ranges[idx].x;
+	}
+}
+// Add this kernel at the top of the file or in a separate header
+__global__ void setAMRLevelsKernel(uint32_t* n_intersections, uint32_t* percentile_values, uint32_t* tile_AMR_levels, int num_tiles)
+{
+    auto idx = cg::this_grid().thread_rank();
+    if (idx < num_tiles)
+    {
+        uint32_t value = n_intersections[idx];
+        if (value <= percentile_values[0])
+            tile_AMR_levels[idx] = 1;
+        else if (value <= percentile_values[1])
+            tile_AMR_levels[idx] = 2;
+        else if (value <= percentile_values[2])
+            tile_AMR_levels[idx] = 3;
+        else
+            tile_AMR_levels[idx] = 4;
+    }
+}
+
+// shall pass the fovea radii and centers of current step in the future
+__global__ void setFoveaAMRLevelsKernel(int foveaStep, uint32_t* tile_AMR_levels_last, uint32_t* tile_AMR_levels_current, int num_tiles)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < num_tiles)
+    {
+        uint32_t current_level = tile_AMR_levels_current[idx];
+        
+        switch(foveaStep)
+        {
+            case 0:
+                tile_AMR_levels_last[idx] = 1;
+                tile_AMR_levels_current[idx] = max(1u, current_level - 3);
+                break;
+            case 1:
+                tile_AMR_levels_last[idx] = max(1u, current_level - 3);
+                tile_AMR_levels_current[idx] = max(1u, current_level - 2);
+                break;
+            case 2:
+                tile_AMR_levels_last[idx] = max(1u, current_level - 2);
+                tile_AMR_levels_current[idx] = max(1u, current_level - 1);
+                break;
+            case 3:
+                tile_AMR_levels_last[idx] = max(1u, current_level - 1);
+                tile_AMR_levels_current[idx] = current_level;
+                break;
+            default:
+                // Do nothing for invalid foveaStep
+                break;
+        }
+    }
+}
+
 CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& chunk, size_t P)
 {
 	GeometryState geom;
@@ -200,6 +260,13 @@ CudaRasterizer::ImageState CudaRasterizer::ImageState::fromChunk(char*& chunk, s
 	obtain(chunk, img.accum_alpha, N, 128);
 	obtain(chunk, img.n_contrib, N, 128);
 	obtain(chunk, img.ranges, N, 128);
+
+	// added for AMR and debug purposes
+	obtain(chunk, img.n_intersections, N, 128);
+    obtain(chunk, img.n_intersections_sorted, N, 128);
+    obtain(chunk, img.tile_AMR_levels, N, 128);
+	obtain(chunk, img.tile_AMR_levels_last, N, 128);
+    
 	return img;
 }
 
@@ -240,10 +307,83 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* cam_pos,
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
+	const int foveaStep,
+	const float* out_color_precomp,
+	const int* radii_precomp,
+	const float* means2D_precomp,
+	const float* conic_opacity_precomp,
+	const float* geom_rgb_precomp,
+	const int* point_list_precomp,
+	const int* ranges_precomp,
+	const int* tile_AMR_levels_last,
+	const int* tile_AMR_levels_current,
+	char* geom_buffer,
+	char* binning_buffer,
+	char* image_buffer,
 	float* out_color,
 	int* radii,
 	bool debug)
 {
+	if (foveaStep > 0){
+		
+		GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
+		// Retrieve total number of Gaussian instances to launch and resize aux buffers
+		int num_rendered;
+		CHECK_CUDA(cudaMemcpy(&num_rendered, geomState.point_offsets + P - 1, sizeof(int), cudaMemcpyDeviceToHost), debug);
+		BinningState binningState = BinningState::fromChunk(binning_buffer, num_rendered);
+		ImageState imgState = ImageState::fromChunk(image_buffer, width * height);
+
+		dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);
+		int num_tiles = tile_grid.x * tile_grid.y;
+		dim3 render_tile_grid( ( (width + BLOCK_X - 1) / BLOCK_X ) * RENDER_BLOCK_RATIO, ( (height + BLOCK_Y - 1) / BLOCK_Y ) * RENDER_BLOCK_RATIO, 1);
+		// dim3 block(BLOCK_X, BLOCK_Y, 1);
+		dim3 block_for_render(RENDER_BLOCK_X, RENDER_BLOCK_Y, 1);
+		// std::cout << "Render tile grid: " << render_tile_grid.x << "x" << render_tile_grid.y << std::endl;
+		// std::cout << "Tile grid: " << tile_grid.x << "x" << tile_grid.y << std::endl;
+
+		// use precomputed values to directly run render
+		const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
+
+		// similarly set the ptr to the precomputed values TODO: need to convert types
+		const float* out_color_precomp_ptr = out_color_precomp;
+		// const int* radii_precomp_ptr = radii_precomp;
+		// const float* means2D_precomp_ptr = means2D_precomp;
+		// const float* conic_opacity_precomp_ptr = conic_opacity_precomp;
+		// const float* geom_rgb_precomp_ptr = geom_rgb_precomp;
+		// const int* point_list_precomp_ptr = point_list_precomp;
+		// const int* ranges_precomp_ptr = ranges_precomp;
+		// const int* tile_AMR_levels_last_ptr = tile_AMR_levels_last;
+		// const int* tile_AMR_levels_current_ptr = tile_AMR_levels_current;
+
+		CHECK_CUDA(FORWARD::render(
+			render_tile_grid, block_for_render,
+			imgState.ranges, imgState.tile_AMR_levels,
+			// ranges_precomp_ptr, tile_AMR_levels_current_ptr,
+			binningState.point_list,
+			// point_list_precomp_ptr,
+			width, height,
+			geomState.means2D,
+			// means2D_precomp_ptr,
+			feature_ptr,
+			geomState.conic_opacity,
+			// conic_opacity_precomp_ptr,
+			imgState.accum_alpha,
+			imgState.n_contrib,
+			background,
+			out_color,
+			foveaStep, // new foveated rendering steps
+			out_color_precomp_ptr,
+			imgState.tile_AMR_levels_last
+			), debug)
+
+		
+		// prepare for the next step, set tile_AMR_levels_last to 1, and reduce tile_AMR_levels by 2 (if >2, else set to 1)
+		setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels, num_tiles);
+		return num_rendered;
+	}
+
+	// else, we still need preprocess
+
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
 
@@ -350,12 +490,66 @@ int CudaRasterizer::Rasterizer::forward(
 	CHECK_CUDA(, debug)
 
 	// determine AMR levels by percentiles
+	// Calculate n_intersections
+	int num_tiles = tile_grid.x * tile_grid.y;
+	// uint32_t* n_intersections;
+	// uint32_t* n_intersections_sorted;
+	// CHECK_CUDA(cudaMalloc(&n_intersections, num_tiles * sizeof(uint32_t)), debug);
+	// CHECK_CUDA(cudaMalloc(&n_intersections_sorted, num_tiles * sizeof(uint32_t)), debug);
+
+	// Launch kernel for n_intersections
+	// calculateIntersections<<<(num_tiles + 255) / 256, 256>>>(imgState.ranges, n_intersections, num_tiles);
+	calculateIntersections<<<(num_tiles + 255) / 256, 256>>>(imgState.ranges, imgState.n_intersections, num_tiles);
+	CHECK_CUDA(, debug);
+
+
+	// get percentile values and set AMR levels
+	// should change to general numbers percentiles[AMR_MAX_LEVELS - 1]
+	float percentiles[3] = {0.1f, 0.4f, 0.9f};
+	uint32_t percentile_values[3];
+	// uint32_t* tile_AMR_levels; // use uint8_t to save memory (is this necessary?)
+	// CHECK_CUDA(cudaMalloc(&tile_AMR_levels, num_tiles * sizeof(uint32_t)), debug);
+
+	// Allocate temporary storage for sorting
+	void* d_temp_storage = nullptr;
+	size_t temp_storage_bytes = 0;
+	// when d_temp_storage is nullptr, cub::DeviceRadixSort::SortKeys will return the required size of temp_storage_bytes
+	// CHECK_CUDA(cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, n_intersections, n_intersections_sorted, num_tiles), debug);
+	CHECK_CUDA(cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, imgState.n_intersections, imgState.n_intersections_sorted, num_tiles), debug);
+	CHECK_CUDA(cudaMalloc(&d_temp_storage, temp_storage_bytes), debug);
+
+	// Sort the array
+	// CHECK_CUDA(cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, n_intersections, n_intersections_sorted, num_tiles), debug);
+	CHECK_CUDA(cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, imgState.n_intersections, imgState.n_intersections_sorted, num_tiles), debug);
+
+	// Calculate percentile indices
+	int percentile_indices[3];
+	for (int i = 0; i < 3; i++)
+	{
+		percentile_indices[i] = static_cast<int>(percentiles[i] * num_tiles);
+	}
+
+	// Copy percentile values back to host
+	for (int i = 0; i < 3; i++) {
+		// CHECK_CUDA(cudaMemcpy(&percentile_values[i], n_intersections_sorted + percentile_indices[i], sizeof(uint32_t), cudaMemcpyDeviceToHost), debug);
+		CHECK_CUDA(cudaMemcpy(&percentile_values[i], imgState.n_intersections_sorted + percentile_indices[i], sizeof(uint32_t), cudaMemcpyDeviceToHost), debug);
+	}
+
+	// Set AMR levels
+	// setAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(n_intersections, percentile_values, tile_AMR_levels, num_tiles);
+	setAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(imgState.n_intersections, percentile_values, imgState.tile_AMR_levels, num_tiles);
+	CHECK_CUDA(, debug);
+
+	// Clean up
+	cudaFree(d_temp_storage);
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
+	const float* out_color_precomp_ptr = out_color_precomp; // these are not set when foveaStep <=0, still need to pass them
+	
 	CHECK_CUDA(FORWARD::render(
 		render_tile_grid, block_for_render,
-		imgState.ranges,
+		imgState.ranges, imgState.tile_AMR_levels,
 		binningState.point_list,
 		width, height,
 		geomState.means2D,
@@ -364,7 +558,15 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.accum_alpha,
 		imgState.n_contrib,
 		background,
-		out_color), debug)
+		out_color,
+		foveaStep, // new foveated rendering steps
+		out_color_precomp_ptr,
+		imgState.tile_AMR_levels_last), debug)
+
+	if (foveaStep == 0 ) {
+		// prepare for the next step, set tile_AMR_levels_last to 1, and reduce tile_AMR_levels by 2 (if >2, else set to 1)
+		setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels, num_tiles);
+	}
 
 	return num_rendered;
 }

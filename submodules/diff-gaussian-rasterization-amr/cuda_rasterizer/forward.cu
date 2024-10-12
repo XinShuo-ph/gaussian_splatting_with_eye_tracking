@@ -261,7 +261,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 template <uint32_t CHANNELS>
 __global__ void __launch_bounds__(RENDER_BLOCK_X * RENDER_BLOCK_Y)
 renderCUDA(
-	const uint2* __restrict__ ranges,
+	const uint2* __restrict__ ranges, uint32_t* tile_AMR_levels,
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
@@ -270,7 +270,10 @@ renderCUDA(
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
-	float* __restrict__ out_color)
+	float* __restrict__ out_color,
+		const int foveaStep,
+		const float* __restrict__ out_color_precomp,
+		const uint32_t* __restrict__ tile_AMR_levels_last)
 {
 	// render with AMR, now block.group_index().x/RENDER_BLOCK_RATIO will be tile idx
 	//                   and block.group_index().x % RENDER_BLOCK_RATIO will be pixel offset
@@ -286,10 +289,73 @@ renderCUDA(
 	uint32_t pix_0_id = W * pix_0.y + pix_0.x;
 	float2 pixf_0 = { (float)pix_0.x, (float)pix_0.y };
 
-	// Check if this thread is associated with a valid pixel or outside.
-	bool inside = pix_0.x < W&& pix_0.y < H;
-	// Done threads can help with fetching, but don't rasterize
+
+	// determine current tile's AMR level and round of rendering of this group
+	uint32_t offset_x = block.group_index().x % RENDER_BLOCK_RATIO;
+	uint32_t offset_y = block.group_index().y % RENDER_BLOCK_RATIO;
+	uint2 pix = { pix_0.x + offset_x, pix_0.y + offset_y };
+	uint32_t pix_id = W * pix.y + pix.x;
+	float2 pixf = { (float)pix.x, (float)pix.y };
+
+		
+	// // Check if this thread is associated with a valid pixel or outside.
+	bool inside = pix.x < W&& pix.y < H;
+	// // Done threads can help with fetching, but don't rasterize
 	bool done = !inside;
+
+
+	int AMR_round = 1; // the round of AMR level 1,...,AMR_MAX_LEVELS
+	// mark AMR round manually
+	switch (offset_x)
+	{
+		case 0:
+			switch (offset_y)
+			{
+				case 0:
+					AMR_round = 1;
+					break;
+				case 1:
+					AMR_round = 4;
+					break;
+			}
+			break;
+		case 1:
+			switch (offset_y)
+			{
+				case 0:
+					AMR_round = 3;
+					break;
+				case 1:
+					AMR_round = 2;
+					break;
+			}
+			break;
+	}
+	// int AMR_level = static_cast<int>(floor(0.5*log10f(toDo + 1) * AMR_MAX_LEVELS/4)) + 1;
+	uint32_t AMR_level = tile_AMR_levels[(block.group_index().y /RENDER_BLOCK_RATIO) * horizontal_blocks + (block.group_index().x / RENDER_BLOCK_RATIO)];
+	if (AMR_level > AMR_MAX_LEVELS)
+		AMR_level = AMR_MAX_LEVELS;
+
+	// if fovStep is set to -1, this marks doing the full rendering, nothing changes
+	if (foveaStep == 0 ) {
+		// step 0: render only the lowest level
+		AMR_level = 1;
+	}
+	else if (foveaStep > 0) {
+		// steps after: render only those tiles that have increased AMR level
+		int AMR_level_last = tile_AMR_levels_last[(block.group_index().y /RENDER_BLOCK_RATIO) * horizontal_blocks + (block.group_index().x / RENDER_BLOCK_RATIO)];
+		if (AMR_round <= AMR_level_last){
+			// simply copy the precomputed value
+			for (int ch = 0; ch < CHANNELS; ch++){
+				out_color[ch * H * W + pix_id] = out_color_precomp[ch * H * W + pix_id];
+			}
+			return;
+		}
+	}
+	
+	if (AMR_round > AMR_level)
+		return;
+
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[(block.group_index().y /RENDER_BLOCK_RATIO) * horizontal_blocks + (block.group_index().x / RENDER_BLOCK_RATIO)];
@@ -361,46 +427,6 @@ renderCUDA(
 		// reset toDo
 		toDo = range.y - range.x;
 */
-		uint32_t offset_x = block.group_index().x % RENDER_BLOCK_RATIO;
-		uint32_t offset_y = block.group_index().y % RENDER_BLOCK_RATIO;
-		uint2 pix = { pix_0.x + offset_x, pix_0.y + offset_y };
-		uint32_t pix_id = W * pix.y + pix.x;
-		float2 pixf = { (float)pix.x, (float)pix.y };
-
-
-		int AMR_round = 1; // the round of AMR level 1,...,AMR_MAX_LEVELS
-		// mark AMR round manually
-		switch (offset_x)
-		{
-			case 0:
-				switch (offset_y)
-				{
-					case 0:
-						AMR_round = 1;
-						break;
-					case 1:
-						AMR_round = 4;
-						break;
-				}
-				break;
-			case 1:
-				switch (offset_y)
-				{
-					case 0:
-						AMR_round = 3;
-						break;
-					case 1:
-						AMR_round = 2;
-						break;
-				}
-				break;
-		}
-		int AMR_level = static_cast<int>(floor(0.5*log10f(toDo + 1) * AMR_MAX_LEVELS/4)) + 1;
-		if (AMR_level > AMR_MAX_LEVELS)
-			AMR_level = AMR_MAX_LEVELS;
-
-		// if (AMR_round > AMR_level)
-		// 	return;
 
 
 		// Initialize helper variables
@@ -484,11 +510,14 @@ renderCUDA(
 template <uint32_t CHANNELS>
 __global__ void __launch_bounds__(RENDER_BLOCK_X * RENDER_BLOCK_Y)
 interpolateCUDA(
-	const uint2* __restrict__ ranges,
+	const uint2* __restrict__ ranges, uint32_t* tile_AMR_levels,
 	int W, int H,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
-	float* __restrict__ out_color)
+	float* __restrict__ out_color,
+		const int foveaStep,
+		const float* __restrict__ out_color_precomp,
+		const uint32_t* __restrict__ tile_AMR_levels_last)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -501,15 +530,107 @@ interpolateCUDA(
 	uint32_t pix_0_id = W * pix_0.y + pix_0.x;
 	float2 pixf_0 = { (float)pix_0.x, (float)pix_0.y };
 
+
+	// determine AMR round of current thread from offsets
+	uint32_t offset_x = block.group_index().x % RENDER_BLOCK_RATIO;
+	uint32_t offset_y = block.group_index().y % RENDER_BLOCK_RATIO;
+	uint2 pix = { pix_0.x + offset_x, pix_0.y + offset_y };
+	uint32_t pix_id = W * pix.y + pix.x;
+	float2 pixf = { (float)pix.x, (float)pix.y };
+
 	// Check if this thread is associated with a valid pixel or outside.
-	bool inside = pix_0.x < W&& pix_0.y < H;
-	// Done threads can help with fetching, but don't rasterize
-	bool done = !inside;
+	bool inside = pix.x < W&& pix.y < H;
+	if (!inside) return;
+
+	int AMR_round = 1; // the round of AMR level 1,...,AMR_MAX_LEVELS
+	// mark AMR round manually
+	switch (offset_x)
+	{
+		case 0:
+			switch (offset_y)
+			{
+				case 0:
+					AMR_round = 1;
+					break;
+				case 1:
+					AMR_round = 4;
+					break;
+			}
+			break;
+		case 1:
+			switch (offset_y)
+			{
+				case 0:
+					AMR_round = 3;
+					break;
+				case 1:
+					AMR_round = 2;
+					break;
+			}
+			break;
+	}
+	// int AMR_level = static_cast<int>(floor(0.5*log10f(toDo + 1) * AMR_MAX_LEVELS/4)) + 1;
+	uint32_t AMR_level = tile_AMR_levels[(block.group_index().y /RENDER_BLOCK_RATIO) * horizontal_blocks + (block.group_index().x / RENDER_BLOCK_RATIO)];
+	if (AMR_level > AMR_MAX_LEVELS)
+		AMR_level = AMR_MAX_LEVELS;
+
+	// if fovStep is set to -1, this marks doing the full rendering, nothing changes
+	if (foveaStep == 0 ) {
+		// step 0: render only the lowest level
+		AMR_level = 1;
+	}
+	else if (foveaStep > 0) {
+		// steps after: render only those tiles that have increased AMR level
+		int AMR_level_last = tile_AMR_levels_last[(block.group_index().y /RENDER_BLOCK_RATIO) * horizontal_blocks + (block.group_index().x / RENDER_BLOCK_RATIO)];
+		if (AMR_round <= AMR_level_last){
+			// simply copy the precomputed value
+			for (int ch = 0; ch < CHANNELS; ch++){
+				out_color[ch * H * W + pix_id] = out_color_precomp[ch * H * W + pix_id];
+			}
+			return;
+		}
+	}
+	
+	// return if it's already computed
+	if (AMR_round <= AMR_level)
+		return;
+	
+	// interpolate by copying the value from last round
+	uint32_t offset_x_last = 0;
+	uint32_t offset_y_last = 0;
+
+	switch (AMR_level) // go to last accurate round
+		{
+			case 1:
+				offset_x_last = 0;
+				offset_y_last = 0;
+				break;
+			case 2:
+				offset_x_last = 1;
+				offset_y_last = 1;
+				break;
+			case 3: // set to the nearest pixel
+				offset_x_last = 1;
+				offset_y_last = 1;
+				break;
+		}
+
+	uint2 pix_last = { pix_0.x + offset_x_last, pix_0.y + offset_y_last };
+	uint32_t pix_last_id = W * pix_last.y + pix_last.x;
+	float2 pixf_last = { (float)pix_last.x, (float)pix_last.y };
+
+
+	// current naive interpolation: simply copy the value from last round
+	final_T[pix_id] = final_T[pix_last_id];
+	n_contrib[pix_id] = n_contrib[pix_last_id];
+	for (int ch = 0; ch < CHANNELS; ch++)
+		out_color[ch * H * W + pix_id] = out_color[ch * H * W + pix_last_id];
+
 }
 
 void FORWARD::render(
 	const dim3 render_tile_grid, dim3 block_for_render,
-	const uint2* ranges,
+	const uint2* ranges, uint32_t* tile_AMR_levels,
 	const uint32_t* point_list,
 	int W, int H,
 	const float2* means2D,
@@ -518,10 +639,13 @@ void FORWARD::render(
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
-	float* out_color)
+	float* out_color,
+		const int foveaStep,
+		const float* out_color_precomp,
+		const uint32_t* tile_AMR_levels_last)
 {
 	renderCUDA<NUM_CHANNELS> << <render_tile_grid, block_for_render >> > (
-		ranges,
+		ranges, tile_AMR_levels,
 		point_list,
 		W, H,
 		means2D,
@@ -530,14 +654,20 @@ void FORWARD::render(
 		final_T,
 		n_contrib,
 		bg_color,
-		out_color);
+		out_color,
+			foveaStep,
+			out_color_precomp,
+			tile_AMR_levels_last);
 	// before writing interpolation algorithm, try doing nothing and measure time cost of just launching the kernel (should be very small)
 	interpolateCUDA<NUM_CHANNELS> << <render_tile_grid, block_for_render >> > (
-		ranges,
+		ranges, tile_AMR_levels,
 		W, H,
 		final_T,
 		n_contrib,
-		out_color);
+		out_color,
+			foveaStep,
+			out_color_precomp,
+			tile_AMR_levels_last);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

@@ -50,7 +50,7 @@ namespace FORWARD
 	// Main rasterization method.
 	void render(
 		const dim3 render_tile_grid, dim3 block_for_render,
-		const uint2* ranges,
+		const uint2* ranges, uint32_t* tile_AMR_levels,
 		const uint32_t* point_list,
 		int W, int H,
 		const float2* points_xy_image,
@@ -59,7 +59,11 @@ namespace FORWARD
 		float* final_T,
 		uint32_t* n_contrib,
 		const float* bg_color,
-		float* out_color);
+		float* out_color,
+		const int foveaStep,
+		const float* out_color_precomp,
+		const uint32_t* tile_AMR_levels_last
+		);
 }
 
 
