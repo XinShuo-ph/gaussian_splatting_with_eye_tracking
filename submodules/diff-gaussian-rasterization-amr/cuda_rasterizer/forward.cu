@@ -272,24 +272,27 @@ renderCUDA(
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color)
 {
+	// render with AMR, now block.group_index().x/RENDER_BLOCK_RATIO will be tile idx
+	//                   and block.group_index().x % RENDER_BLOCK_RATIO will be pixel offset
+
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
 	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;
 	// group_index() identifies the tile, e.g. block.group_index().y * horizontal_blocks + block.group_index().x is the tile idx
-	uint2 pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };
+	uint2 pix_min = { (block.group_index().x / RENDER_BLOCK_RATIO) * BLOCK_X, (block.group_index().y /RENDER_BLOCK_RATIO) * BLOCK_Y }; // make sure this is correctly floored
 	uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
 	// thread_index identifies the pixel on the block
-	uint2 pix = { pix_min.x + block.thread_index().x*RENDER_BLOCK_RATIO, pix_min.y + block.thread_index().y*RENDER_BLOCK_RATIO };
-	uint32_t pix_id = W * pix.y + pix.x;
-	float2 pixf = { (float)pix.x, (float)pix.y };
+	uint2 pix_0 = { pix_min.x + block.thread_index().x*RENDER_BLOCK_RATIO, pix_min.y + block.thread_index().y*RENDER_BLOCK_RATIO };
+	uint32_t pix_0_id = W * pix_0.y + pix_0.x;
+	float2 pixf_0 = { (float)pix_0.x, (float)pix_0.y };
 
 	// Check if this thread is associated with a valid pixel or outside.
-	bool inside = pix.x < W&& pix.y < H;
+	bool inside = pix_0.x < W&& pix_0.y < H;
 	// Done threads can help with fetching, but don't rasterize
 	bool done = !inside;
 
 	// Load start/end range of IDs to process in bit sorted list.
-	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
+	uint2 range = ranges[(block.group_index().y /RENDER_BLOCK_RATIO) * horizontal_blocks + (block.group_index().x / RENDER_BLOCK_RATIO)];
 	const int rounds = ((range.y - range.x + RENDER_BLOCK_SIZE - 1) / RENDER_BLOCK_SIZE);
 	int toDo = range.y - range.x;
 
@@ -304,9 +307,6 @@ renderCUDA(
 	// // if not accurate point, skip
 	// done = done || !is_accurate_point;
 
-	int AMR_round = 0; // the round of AMR level 0,...,AMR_MAX_LEVELS-1
-
-	// for(AMR_round = 0; AMR_round < AMR_MAX_LEVELS; AMR_round++)
 	
 
 	// Allocate storage for batches of collectively fetched data.
@@ -314,85 +314,201 @@ renderCUDA(
 	__shared__ float2 collected_xy[RENDER_BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[RENDER_BLOCK_SIZE];
 
-	// Initialize helper variables
-	float T = 1.0f;
-	uint32_t contributor = 0;
-	uint32_t last_contributor = 0;
-	float C[CHANNELS] = { 0 };
+// do not use for loop, pass higher number of cooperative groups instead
+/*
+	// above quantitites are still shared with AMR tile
+	int AMR_level = static_cast<int>(floor(1.0*log10f(toDo + 1))) + 1;
+	if (AMR_level > AMR_MAX_LEVELS)
+		AMR_level = AMR_MAX_LEVELS;
 
-	// Iterate over batches until all done or range is complete
-	for (int i = 0; i < rounds; i++, toDo -= RENDER_BLOCK_SIZE)
-	{
-		// End if entire block votes that it is done rasterizing
-		int num_done = __syncthreads_count(done);
-		if (num_done == RENDER_BLOCK_SIZE)
-			break;
+	int AMR_round = 1; // the round of AMR level 1,...,AMR_MAX_LEVELS
 
-		// Collectively fetch per-Gaussian data from global to shared
-		int progress = i * RENDER_BLOCK_SIZE + block.thread_rank();
-		if (range.x + progress < range.y)
+	for(AMR_round = 1; AMR_round <= AMR_MAX_LEVELS; AMR_round++){
+
+		if (AMR_round > AMR_level)
+			continue;
+
+		// offset the pix at each AMR round
+		uint32_t offset_x = 0;
+		uint32_t offset_y = 0;
+
+		switch (AMR_round) // for 2x2=4 AMR levels 
 		{
-			int coll_id = point_list[range.x + progress];
-			collected_id[block.thread_rank()] = coll_id;
-			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
-			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			case 2:
+				offset_x = 1;
+				offset_y = 1;
+				break;
+			case 3:
+				offset_x = 1;
+				offset_y = 0;
+				break;
+			case 4:
+				offset_x = 0;
+				offset_y = 1;
+				break;
 		}
-		block.sync();
 
-		// Iterate over current batch
-		for (int j = 0; !done && j < min(RENDER_BLOCK_SIZE, toDo); j++)
+		uint2 pix = { pix_0.x + offset_x, pix_0.y + offset_y };
+		uint32_t pix_id = W * pix.y + pix.x;
+		float2 pixf = { (float)pix.x, (float)pix.y };
+
+
+		// Check if this thread is associated with a valid pixel or outside.
+		inside = pix.x < W&& pix.y < H;
+		// Done threads can help with fetching, but don't rasterize
+		done = !inside;
+
+		// reset toDo
+		toDo = range.y - range.x;
+*/
+		uint32_t offset_x = block.group_index().x % RENDER_BLOCK_RATIO;
+		uint32_t offset_y = block.group_index().y % RENDER_BLOCK_RATIO;
+		uint2 pix = { pix_0.x + offset_x, pix_0.y + offset_y };
+		uint32_t pix_id = W * pix.y + pix.x;
+		float2 pixf = { (float)pix.x, (float)pix.y };
+
+
+		int AMR_round = 1; // the round of AMR level 1,...,AMR_MAX_LEVELS
+		// mark AMR round manually
+		switch (offset_x)
 		{
-			// Keep track of current position in range
-			contributor++;
+			case 0:
+				switch (offset_y)
+				{
+					case 0:
+						AMR_round = 1;
+						break;
+					case 1:
+						AMR_round = 4;
+						break;
+				}
+				break;
+			case 1:
+				switch (offset_y)
+				{
+					case 0:
+						AMR_round = 3;
+						break;
+					case 1:
+						AMR_round = 2;
+						break;
+				}
+				break;
+		}
+		int AMR_level = static_cast<int>(floor(0.5*log10f(toDo + 1) * AMR_MAX_LEVELS/4)) + 1;
+		if (AMR_level > AMR_MAX_LEVELS)
+			AMR_level = AMR_MAX_LEVELS;
 
-			// Resample using conic matrix (cf. "Surface 
-			// Splatting" by Zwicker et al., 2001)
-			float2 xy = collected_xy[j];
-			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
-			float4 con_o = collected_conic_opacity[j];
-			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
-			if (power > 0.0f)
-				continue;
+		// if (AMR_round > AMR_level)
+		// 	return;
 
-			// Eq. (2) from 3D Gaussian splatting paper.
-			// Obtain alpha by multiplying with Gaussian opacity
-			// and its exponential falloff from mean.
-			// Avoid numerical instabilities (see paper appendix). 
-			float alpha = min(0.99f, con_o.w * exp(power));
-			if (alpha < 1.0f / 255.0f)
-				continue;
-			float test_T = T * (1 - alpha);
-			if (test_T < 0.0001f)
+
+		// Initialize helper variables
+		float T = 1.0f;
+		uint32_t contributor = 0;
+		uint32_t last_contributor = 0;
+		float C[CHANNELS] = { 0 };
+
+		// Iterate over batches until all done or range is complete
+		for (int i = 0; i < rounds; i++, toDo -= RENDER_BLOCK_SIZE)
+		{
+			// End if entire block votes that it is done rasterizing
+			int num_done = __syncthreads_count(done);
+			if (num_done == RENDER_BLOCK_SIZE)
+				break;
+
+			// Collectively fetch per-Gaussian data from global to shared
+			int progress = i * RENDER_BLOCK_SIZE + block.thread_rank();
+			if (range.x + progress < range.y)
 			{
-				done = true;
-				continue;
+				int coll_id = point_list[range.x + progress];
+				collected_id[block.thread_rank()] = coll_id;
+				collected_xy[block.thread_rank()] = points_xy_image[coll_id];
+				collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			}
+			block.sync();
 
-			// Eq. (3) from 3D Gaussian splatting paper.
-			for (int ch = 0; ch < CHANNELS; ch++)
-				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+			// Iterate over current batch
+			for (int j = 0; !done && j < min(RENDER_BLOCK_SIZE, toDo); j++)
+			{
+				// Keep track of current position in range
+				contributor++;
 
-			T = test_T;
+				// Resample using conic matrix (cf. "Surface 
+				// Splatting" by Zwicker et al., 2001)
+				float2 xy = collected_xy[j];
+				float2 d = { xy.x - pixf.x, xy.y - pixf.y };
+				float4 con_o = collected_conic_opacity[j];
+				float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+				if (power > 0.0f)
+					continue;
 
-			// Keep track of last range entry to update this
-			// pixel.
-			last_contributor = contributor;
+				// Eq. (2) from 3D Gaussian splatting paper.
+				// Obtain alpha by multiplying with Gaussian opacity
+				// and its exponential falloff from mean.
+				// Avoid numerical instabilities (see paper appendix). 
+				float alpha = min(0.99f, con_o.w * exp(power));
+				if (alpha < 1.0f / 255.0f)
+					continue;
+				float test_T = T * (1 - alpha);
+				if (test_T < 0.0001f)
+				{
+					done = true;
+					continue;
+				}
+
+				// Eq. (3) from 3D Gaussian splatting paper.
+				for (int ch = 0; ch < CHANNELS; ch++)
+					C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+
+				T = test_T;
+
+				// Keep track of last range entry to update this
+				// pixel.
+				last_contributor = contributor;
+			}
 		}
-	}
 
-	// All threads that treat valid pixel write out their final
-	// rendering data to the frame and auxiliary buffers.
-	if (inside)
-	{
-		final_T[pix_id] = T;
-		n_contrib[pix_id] = last_contributor;
-		for (int ch = 0; ch < CHANNELS; ch++)
-			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
-	}
+		// All threads that treat valid pixel write out their final
+		// rendering data to the frame and auxiliary buffers.
+		if (inside)
+		{
+			final_T[pix_id] = T;
+			n_contrib[pix_id] = last_contributor;
+			for (int ch = 0; ch < CHANNELS; ch++)
+				out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+		}
+		
+}
+
+template <uint32_t CHANNELS>
+__global__ void __launch_bounds__(RENDER_BLOCK_X * RENDER_BLOCK_Y)
+interpolateCUDA(
+	const uint2* __restrict__ ranges,
+	int W, int H,
+	float* __restrict__ final_T,
+	uint32_t* __restrict__ n_contrib,
+	float* __restrict__ out_color)
+{
+	// Identify current tile and associated min/max pixel range.
+	auto block = cg::this_thread_block();
+	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;
+	// group_index() identifies the tile, e.g. block.group_index().y * horizontal_blocks + block.group_index().x is the tile idx
+	uint2 pix_min = { (block.group_index().x / RENDER_BLOCK_RATIO) * BLOCK_X, (block.group_index().y /RENDER_BLOCK_RATIO) * BLOCK_Y }; // make sure this is correctly floored
+	uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
+	// thread_index identifies the pixel on the block
+	uint2 pix_0 = { pix_min.x + block.thread_index().x*RENDER_BLOCK_RATIO, pix_min.y + block.thread_index().y*RENDER_BLOCK_RATIO };
+	uint32_t pix_0_id = W * pix_0.y + pix_0.x;
+	float2 pixf_0 = { (float)pix_0.x, (float)pix_0.y };
+
+	// Check if this thread is associated with a valid pixel or outside.
+	bool inside = pix_0.x < W&& pix_0.y < H;
+	// Done threads can help with fetching, but don't rasterize
+	bool done = !inside;
 }
 
 void FORWARD::render(
-	const dim3 grid, dim3 block_for_render,
+	const dim3 render_tile_grid, dim3 block_for_render,
 	const uint2* ranges,
 	const uint32_t* point_list,
 	int W, int H,
@@ -404,7 +520,7 @@ void FORWARD::render(
 	const float* bg_color,
 	float* out_color)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block_for_render >> > (
+	renderCUDA<NUM_CHANNELS> << <render_tile_grid, block_for_render >> > (
 		ranges,
 		point_list,
 		W, H,
@@ -414,6 +530,13 @@ void FORWARD::render(
 		final_T,
 		n_contrib,
 		bg_color,
+		out_color);
+	// before writing interpolation algorithm, try doing nothing and measure time cost of just launching the kernel (should be very small)
+	interpolateCUDA<NUM_CHANNELS> << <render_tile_grid, block_for_render >> > (
+		ranges,
+		W, H,
+		final_T,
+		n_contrib,
 		out_color);
 }
 

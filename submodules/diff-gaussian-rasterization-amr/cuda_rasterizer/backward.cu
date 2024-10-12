@@ -397,7 +397,7 @@ __global__ void preprocessCUDA(
 
 // Backward version of the rendering procedure.
 template <uint32_t C>
-__global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
+__global__ void __launch_bounds__(RENDER_BLOCK_X * RENDER_BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
@@ -426,15 +426,15 @@ renderCUDA(
 	const bool inside = pix.x < W&& pix.y < H;
 	const uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
 
-	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
+	const int rounds = ((range.y - range.x + RENDER_BLOCK_SIZE - 1) / RENDER_BLOCK_SIZE);
 
 	bool done = !inside;
 	int toDo = range.y - range.x;
 
-	__shared__ int collected_id[BLOCK_SIZE];
-	__shared__ float2 collected_xy[BLOCK_SIZE];
-	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
-	__shared__ float collected_colors[C * BLOCK_SIZE];
+	__shared__ int collected_id[RENDER_BLOCK_SIZE];
+	__shared__ float2 collected_xy[RENDER_BLOCK_SIZE];
+	__shared__ float4 collected_conic_opacity[RENDER_BLOCK_SIZE];
+	__shared__ float collected_colors[C * RENDER_BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
@@ -461,12 +461,12 @@ renderCUDA(
 	const float ddely_dy = 0.5 * H;
 
 	// Traverse all Gaussians
-	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
+	for (int i = 0; i < rounds; i++, toDo -= RENDER_BLOCK_SIZE)
 	{
 		// Load auxiliary data into shared memory, start in the BACK
 		// and load them in revers order.
 		block.sync();
-		const int progress = i * BLOCK_SIZE + block.thread_rank();
+		const int progress = i * RENDER_BLOCK_SIZE + block.thread_rank();
 		if (range.x + progress < range.y)
 		{
 			const int coll_id = point_list[range.y - progress - 1];
@@ -474,12 +474,12 @@ renderCUDA(
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			for (int i = 0; i < C; i++)
-				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
+				collected_colors[i * RENDER_BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
 		}
 		block.sync();
 
 		// Iterate over Gaussians
-		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
+		for (int j = 0; !done && j < min(RENDER_BLOCK_SIZE, toDo); j++)
 		{
 			// Keep track of current Gaussian ID. Skip, if this one
 			// is behind the last contributor for this pixel.
@@ -510,7 +510,7 @@ renderCUDA(
 			const int global_id = collected_id[j];
 			for (int ch = 0; ch < C; ch++)
 			{
-				const float c = collected_colors[ch * BLOCK_SIZE + j];
+				const float c = collected_colors[ch * RENDER_BLOCK_SIZE + j];
 				// Update last color (to be used in the next iteration)
 				accum_rec[ch] = last_alpha * last_color[ch] + (1.f - last_alpha) * accum_rec[ch];
 				last_color[ch] = c;
@@ -622,7 +622,7 @@ void BACKWARD::preprocess(
 }
 
 void BACKWARD::render(
-	const dim3 grid, const dim3 block,
+	const dim3 render_tile_grid, const dim3 block_for_render,
 	const uint2* ranges,
 	const uint32_t* point_list,
 	int W, int H,
@@ -638,7 +638,7 @@ void BACKWARD::render(
 	float* dL_dopacity,
 	float* dL_dcolors)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
+	renderCUDA<NUM_CHANNELS> << <render_tile_grid, block_for_render >> >(
 		ranges,
 		point_list,
 		W, H,

@@ -49,7 +49,7 @@ namespace FORWARD
 
 	// Main rasterization method.
 	void render(
-		const dim3 grid, dim3 block_for_render,
+		const dim3 render_tile_grid, dim3 block_for_render,
 		const uint2* ranges,
 		const uint32_t* point_list,
 		int W, int H,

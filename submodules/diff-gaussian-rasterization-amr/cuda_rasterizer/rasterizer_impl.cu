@@ -19,6 +19,7 @@
 #include "device_launch_parameters.h"
 #include <cub/cub.cuh>
 #include <cub/device/device_radix_sort.cuh>
+#include <cub/device/device_select.cuh>
 #define GLM_FORCE_CUDA
 #include <glm/glm.hpp>
 
@@ -152,6 +153,30 @@ void CudaRasterizer::Rasterizer::markVisible(
 		present);
 }
 
+// helper function to compute percentile to determine the AMR level
+template<typename T>
+T calculateAMRbyPercentileRadixSort(T* d_array, int size, float percentile, void* d_temp_storage, size_t& temp_storage_bytes, bool debug)
+{
+    // Allocate temporary storage for sorting
+    if (d_temp_storage == nullptr)
+    {
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_array, d_array, size);
+        CHECK_CUDA(cudaMalloc(&d_temp_storage, temp_storage_bytes), debug);
+    }
+
+    // Sort the array
+    CHECK_CUDA(cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_array, d_array, size), debug);
+
+    // Calculate the index for the desired percentile
+    int percentile_index = static_cast<int>(percentile * size);
+
+    // Copy the result back to host
+    T result;
+    CHECK_CUDA(cudaMemcpy(&result, d_array + percentile_index, sizeof(T), cudaMemcpyDeviceToHost), debug);
+
+    return result;
+}
+
 CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& chunk, size_t P)
 {
 	GeometryState geom;
@@ -232,8 +257,14 @@ int CudaRasterizer::Rasterizer::forward(
 	}
 
 	dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);
+	// dim3 test_tile_grid((tile_grid.x) * RENDER_BLOCK_RATIO, (tile_grid.y) * RENDER_BLOCK_RATIO, 1);
+	// std::cout << "Tile grid: " << tile_grid.x << "x" << tile_grid.y << std::endl;
+	// std::cout << "Test tile grid: " << test_tile_grid.x << "x" << test_tile_grid.y << std::endl;
+	dim3 render_tile_grid( ( (width + BLOCK_X - 1) / BLOCK_X ) * RENDER_BLOCK_RATIO, ( (height + BLOCK_Y - 1) / BLOCK_Y ) * RENDER_BLOCK_RATIO, 1);
 	dim3 block(BLOCK_X, BLOCK_Y, 1);
 	dim3 block_for_render(RENDER_BLOCK_X, RENDER_BLOCK_Y, 1);
+	// std::cout << "Render tile grid: " << render_tile_grid.x << "x" << render_tile_grid.y << std::endl;
+	// std::cout << "Tile grid: " << tile_grid.x << "x" << tile_grid.y << std::endl;
 
 	// Dynamically resize image-based auxiliary buffers during training
 	size_t img_chunk_size = required<ImageState>(width * height);
@@ -318,10 +349,12 @@ int CudaRasterizer::Rasterizer::forward(
 			imgState.ranges);
 	CHECK_CUDA(, debug)
 
+	// determine AMR levels by percentiles
+
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
 	CHECK_CUDA(FORWARD::render(
-		tile_grid, block_for_render,
+		render_tile_grid, block_for_render,
 		imgState.ranges,
 		binningState.point_list,
 		width, height,
@@ -382,6 +415,7 @@ void CudaRasterizer::Rasterizer::backward(
 	const float focal_x = width / (2.0f * tan_fovx);
 
 	const dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);
+	const dim3 render_tile_grid(tile_grid.x * RENDER_BLOCK_RATIO, tile_grid.y * RENDER_BLOCK_RATIO, 1);
 	const dim3 block(BLOCK_X, BLOCK_Y, 1);
 	const dim3 block_for_render(RENDER_BLOCK_X, RENDER_BLOCK_Y, 1);
 
@@ -390,8 +424,10 @@ void CudaRasterizer::Rasterizer::backward(
 	// If we were given precomputed colors and not SHs, use them.
 	const float* color_ptr = (colors_precomp != nullptr) ? colors_precomp : geomState.rgb;
 	CHECK_CUDA(BACKWARD::render(
-		tile_grid,
+		render_tile_grid,
 		block_for_render,
+		// tile_grid,
+		// block,
 		imgState.ranges,
 		binningState.point_list,
 		width, height,

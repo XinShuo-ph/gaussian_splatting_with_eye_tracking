@@ -20,6 +20,7 @@
 #include <memory>
 #include "cuda_rasterizer/config.h"
 #include "cuda_rasterizer/rasterizer.h"
+#include "cuda_rasterizer/rasterizer_impl.h"
 #include <fstream>
 #include <string>
 #include <functional>
@@ -32,7 +33,35 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+// save 4 intermediate quantities now
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> ParseBuffers(
+    const torch::Tensor& geomBuffer,
+    const torch::Tensor& binningBuffer,
+    const torch::Tensor& imgBuffer,
+    int P, int width, int height)
+{
+    char* geom_ptr = reinterpret_cast<char*>(geomBuffer.data_ptr());
+    char* binning_ptr = reinterpret_cast<char*>(binningBuffer.data_ptr());
+    char* img_ptr = reinterpret_cast<char*>(imgBuffer.data_ptr());
+
+    CudaRasterizer::GeometryState geom = CudaRasterizer::GeometryState::fromChunk(geom_ptr, P);
+    CudaRasterizer::BinningState binning = CudaRasterizer::BinningState::fromChunk(binning_ptr, P);
+    CudaRasterizer::ImageState img = CudaRasterizer::ImageState::fromChunk(img_ptr, width * height);
+
+    // Create tensors from the parsed data
+    torch::Tensor means2D = torch::from_blob(geom.means2D, {P, 2}, geomBuffer.options().dtype(torch::kFloat32));
+    torch::Tensor conic_opacity = torch::from_blob(geom.conic_opacity, {P, 4}, geomBuffer.options().dtype(torch::kFloat32));
+    torch::Tensor point_list = torch::from_blob(binning.point_list, {P}, binningBuffer.options().dtype(torch::kInt32));
+	int grid_x = (width + BLOCK_X - 1) / BLOCK_X;
+	int grid_y =  (height + BLOCK_Y - 1) / BLOCK_Y;
+    torch::Tensor ranges = torch::from_blob(img.ranges, {grid_x*grid_y, 2}, imgBuffer.options().dtype(torch::kInt32));
+
+    return std::make_tuple(means2D, conic_opacity, point_list, ranges);
+}
+
+// one int for rendered, one tensor for out_color, one tensor for radii, 
+//  4 tensors for the intermediate quantities, and 3 tensors for buffers
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -111,7 +140,10 @@ RasterizeGaussiansCUDA(
 		radii.contiguous().data<int>(),
 		debug);
   }
-  return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer);
+//   return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer);
+	
+	auto [parsed_means2D, parsed_conic_opacity, parsed_point_list, parsed_ranges] = ParseBuffers(geomBuffer, binningBuffer, imgBuffer, P, W, H);
+	return std::make_tuple(rendered, out_color, radii, parsed_means2D, parsed_conic_opacity, parsed_point_list, parsed_ranges, geomBuffer, binningBuffer, imgBuffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
