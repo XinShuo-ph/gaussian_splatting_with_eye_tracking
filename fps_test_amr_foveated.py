@@ -11,6 +11,7 @@ from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer_amr import GaussianModel
 
+
 pix_x = 1920
 pix_y = 1080
 
@@ -19,11 +20,7 @@ parser = ArgumentParser(description="Testing script parameters")
 model = ModelParams(parser, sentinel=True)
 pipeline = PipelineParams(parser)
 
-print(pipeline.debug)
-
 # pipeline.debug = True
-
-print(pipeline.debug)
 
 parser.add_argument("--iteration", default=-1, type=int)
 parser.add_argument("--skip_train", action="store_true")
@@ -34,17 +31,44 @@ print("Rendering " + args.model_path)
 safe_state(args.quiet)
 mydataset = model.extract(args)
 
-# render the acurate image for reference
+
 gaussians = GaussianModel(mydataset.sh_degree) # create an empty gaussian model
 scene = Scene(mydataset, gaussians, load_iteration=args.iteration, shuffle=False) # load the model and cameras
 views = scene.getTrainCameras()
-views = [views[i] for i in range(251)] # use 100 views to average the fps
+views = [views[i] for i in range(100)] # use 100 views to average the fps
 bg_color = [1,1,1] if mydataset.white_background else [0, 0, 0]
 background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
+
+
 pix_horizon = []
 fps_avg = []
-for ratio in [1]:
+fps_avg0 = []
+fps_avg1 = []
+fps_avg2 = []
+fps_avg3 = []
+for ratio in np.linspace(0.2,2.0,10):
+
+    # restart cuda kernel and reload the model to avoid memory leak
+    # torch.cuda.reset_max_memory_allocated()
+    # torch.cuda.reset_peak_memory_stats()
+    
+    print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+    print(f"GPU memory reserved: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
+
+    # if 'gaussians' in locals():
+    #     del gaussians
+    # if 'scene' in locals():
+    #     del scene
+    # if 'views' in locals():
+    #     del views
+    # if 'background' in locals():
+    #     del background
+    # if 'result' in locals():
+    #     del result
+    # if 'rendering' in locals():
+    #     del rendering
+
 
     print(f"Rendering at {int(pix_x*ratio)}x{int(pix_y*ratio)}")
     # change the image width and height
@@ -76,9 +100,10 @@ for ratio in [1]:
         time2 = 0
         time3 = 0
         for i in range(5):
-            rendering = render(view, gaussians, pipeline, background,starter = starter, ender= ender, 
+            result = render(view, gaussians, pipeline, background,starter = starter, ender= ender, 
                                starters = [starter0, starter1, starter2, starter3], enders = [ender0, ender1, ender2, ender3]
-                               )["render"]
+            )
+            rendering = result["render"]
             torch.cuda.synchronize()
             time += starter.elapsed_time(ender)
             time0 += starter0.elapsed_time(ender0)
@@ -113,3 +138,55 @@ for ratio in [1]:
 
     pix_horizon.append(int(pix_x*ratio))
     fps_avg.append(avg_fps)
+    fps_avg0.append(avg_fps0)
+    fps_avg1.append(avg_fps1)
+    fps_avg2.append(avg_fps2)
+    fps_avg3.append(avg_fps3)
+
+
+    
+# plot the fps vs horizontal pix curve for all steps
+import matplotlib.pyplot as plt
+plt.plot(pix_horizon, fps_avg, 'ko-',label = 'total')
+plt.plot(pix_horizon, fps_avg0, 'ro-',label = 'preprocess + level 1')
+plt.plot(pix_horizon, fps_avg1, 'go-',label = 'level 2')
+plt.plot(pix_horizon, fps_avg2, 'bo-',label = 'level 3')
+plt.plot(pix_horizon, fps_avg3, 'yo-',label = 'level 4')
+plt.xlabel('Horizontal Pixels')
+plt.ylabel('FPS')
+plt.title('model: 3DGS_AMR, machine: T4')
+plt.legend()
+plt.savefig('fps_benchmark_amr_fovsteps.png')
+
+plt.figure()
+plt.plot(pix_horizon, fps_avg, 'ko-',label = 'total')
+plt.plot(pix_horizon, fps_avg0, 'ro-',label = 'preprocess + level 1')
+plt.plot(pix_horizon, fps_avg1, 'go-',label = 'level 2')
+plt.plot(pix_horizon, fps_avg2, 'bo-',label = 'level 3')
+plt.plot(pix_horizon, fps_avg3, 'yo-',label = 'level 4')
+plt.plot(np.linspace(800,4000,100), 1.5e8/np.linspace(800,4000,100)**2, 'k--',label = '$y\\propto x^{-2}$')
+plt.plot(np.linspace(800,4000,100), 7e4/np.linspace(800,4000,100), 'b--',label = '$y\\propto x^{-1}$')
+plt.xlabel('Horizontal Pixels')
+plt.ylabel('FPS')
+plt.title('model: 3DGS_AMR, machine: T4')
+plt.legend()
+plt.ylim(1,120)
+plt.savefig('fps_benchmark_scale_amr_fovsteps.png')
+
+
+plt.figure()
+plt.plot(pix_horizon, fps_avg, 'ko-',label = 'total')
+plt.plot(pix_horizon, fps_avg0, 'ro-',label = 'preprocess + level 1')
+plt.plot(pix_horizon, fps_avg1, 'go-',label = 'level 2')
+plt.plot(pix_horizon, fps_avg2, 'bo-',label = 'level 3')
+plt.plot(pix_horizon, fps_avg3, 'yo-',label = 'level 4')
+plt.plot(np.linspace(800,4000,100), 1.8e8/np.linspace(800,4000,100)**2, 'k--',label = '$y\\propto x^{-2}$')
+plt.plot(np.linspace(800,4000,100), 7e4/np.linspace(800,4000,100), 'b--',label = '$y\\propto x^{-1}$')
+plt.semilogy(np.linspace(800,4000,100), 140*np.exp( - 0.75* np.linspace(800,4000,100)/1000), 'y--',label = '$\\log y \\propto C - x $')
+plt.xlabel('Horizontal Pixels')
+plt.ylabel('FPS')
+plt.title('model: 3DGS_AMR, machine: T4')
+plt.legend()
+plt.ylim(10,120)
+plt.savefig('fps_benchmark_log_amr_fovsteps.png')
+

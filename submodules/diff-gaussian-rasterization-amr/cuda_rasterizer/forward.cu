@@ -346,8 +346,11 @@ renderCUDA(
 		int AMR_level_last = tile_AMR_levels_last[(block.group_index().y /RENDER_BLOCK_RATIO) * horizontal_blocks + (block.group_index().x / RENDER_BLOCK_RATIO)];
 		if (AMR_round <= AMR_level_last){
 			// simply copy the precomputed value
-			for (int ch = 0; ch < CHANNELS; ch++){
-				out_color[ch * H * W + pix_id] = out_color_precomp[ch * H * W + pix_id];
+
+			if (inside){
+				for (int ch = 0; ch < CHANNELS; ch++){
+					out_color[ch * H * W + pix_id] = out_color_precomp[ch * H * W + pix_id];
+				}
 			}
 			return;
 		}
@@ -619,12 +622,13 @@ interpolateCUDA(
 	uint32_t pix_last_id = W * pix_last.y + pix_last.x;
 	float2 pixf_last = { (float)pix_last.x, (float)pix_last.y };
 
-
-	// current naive interpolation: simply copy the value from last round
-	final_T[pix_id] = final_T[pix_last_id];
-	n_contrib[pix_id] = n_contrib[pix_last_id];
-	for (int ch = 0; ch < CHANNELS; ch++)
-		out_color[ch * H * W + pix_id] = out_color[ch * H * W + pix_last_id];
+	if (pix_last.x < W && pix_last.y < H){ // avoid illegal memory access
+		// current naive interpolation: simply copy the value from last round
+		final_T[pix_id] = final_T[pix_last_id];
+		n_contrib[pix_id] = n_contrib[pix_last_id];
+		for (int ch = 0; ch < CHANNELS; ch++)
+			out_color[ch * H * W + pix_id] = out_color[ch * H * W + pix_last_id];
+	}
 
 }
 

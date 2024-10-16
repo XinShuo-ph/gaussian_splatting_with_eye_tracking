@@ -205,29 +205,25 @@ __global__ void setAMRLevelsKernel(uint32_t* n_intersections, uint32_t* percenti
 }
 
 // shall pass the fovea radii and centers of current step in the future
-__global__ void setFoveaAMRLevelsKernel(int foveaStep, uint32_t* tile_AMR_levels_last, uint32_t* tile_AMR_levels_current, int num_tiles)
+__global__ void setFoveaAMRLevelsKernel(int foveaStep, uint32_t* tile_AMR_levels_last, uint32_t* tile_AMR_levels_current, uint32_t* tile_AMR_levels, int num_tiles)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    auto idx = cg::this_grid().thread_rank();
     if (idx < num_tiles)
     {
-        uint32_t current_level = tile_AMR_levels_current[idx];
+        uint32_t current_level = tile_AMR_levels[idx];
         
         switch(foveaStep)
         {
             case 0:
-                tile_AMR_levels_last[idx] = 1;
-                tile_AMR_levels_current[idx] = max(1u, current_level - 3);
+                tile_AMR_levels_last[idx] = (current_level > 3) ? current_level - 3 : 1;
+                tile_AMR_levels_current[idx] = (current_level > 2) ? current_level - 2 : 1;
                 break;
             case 1:
-                tile_AMR_levels_last[idx] = max(1u, current_level - 3);
-                tile_AMR_levels_current[idx] = max(1u, current_level - 2);
+                tile_AMR_levels_last[idx] = (current_level > 2) ? current_level - 2 : 1;
+                tile_AMR_levels_current[idx] = (current_level > 1) ? current_level - 1 : 1;
                 break;
             case 2:
-                tile_AMR_levels_last[idx] = max(1u, current_level - 2);
-                tile_AMR_levels_current[idx] = max(1u, current_level - 1);
-                break;
-            case 3:
-                tile_AMR_levels_last[idx] = max(1u, current_level - 1);
+                tile_AMR_levels_last[idx] = (current_level > 1) ? current_level - 1 : 1;
                 tile_AMR_levels_current[idx] = current_level;
                 break;
             default:
@@ -266,6 +262,7 @@ CudaRasterizer::ImageState CudaRasterizer::ImageState::fromChunk(char*& chunk, s
     obtain(chunk, img.n_intersections_sorted, N, 128);
     obtain(chunk, img.tile_AMR_levels, N, 128);
 	obtain(chunk, img.tile_AMR_levels_last, N, 128);
+	obtain(chunk, img.tile_AMR_levels_current, N, 128);
     
 	return img;
 }
@@ -317,19 +314,26 @@ int CudaRasterizer::Rasterizer::forward(
 	const int* ranges_precomp,
 	const int* tile_AMR_levels_last,
 	const int* tile_AMR_levels_current,
-	char* geom_buffer,
+	char* geom_buffer, // these three are precomputed buffers
 	char* binning_buffer,
 	char* image_buffer,
 	float* out_color,
 	int* radii,
 	bool debug)
 {
-	if (foveaStep > 0){
+	if (foveaStep >= 1 ){
+		if (debug) {
+			std::cout << "CudaRasterizer::Rasterizer::forward() Foveated rendering step: " << foveaStep << std::endl;
+		}
+
 		
 		GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
 		// Retrieve total number of Gaussian instances to launch and resize aux buffers
 		int num_rendered;
 		CHECK_CUDA(cudaMemcpy(&num_rendered, geomState.point_offsets + P - 1, sizeof(int), cudaMemcpyDeviceToHost), debug);
+		if (debug){
+			std::cout << "CudaRasterizer::Rasterizer::forward() num_rendered: " << num_rendered << " in foveaStep: " << foveaStep << std::endl;
+		}
 		BinningState binningState = BinningState::fromChunk(binning_buffer, num_rendered);
 		ImageState imgState = ImageState::fromChunk(image_buffer, width * height);
 
@@ -355,9 +359,13 @@ int CudaRasterizer::Rasterizer::forward(
 		// const int* tile_AMR_levels_last_ptr = tile_AMR_levels_last;
 		// const int* tile_AMR_levels_current_ptr = tile_AMR_levels_current;
 
+		if (debug) {
+			std::cout << "CudaRasterizer::Rasterizer::forward() render" << std::endl;
+		}
+
 		CHECK_CUDA(FORWARD::render(
 			render_tile_grid, block_for_render,
-			imgState.ranges, imgState.tile_AMR_levels,
+			imgState.ranges, imgState.tile_AMR_levels_current,
 			// ranges_precomp_ptr, tile_AMR_levels_current_ptr,
 			binningState.point_list,
 			// point_list_precomp_ptr,
@@ -376,13 +384,54 @@ int CudaRasterizer::Rasterizer::forward(
 			imgState.tile_AMR_levels_last
 			), debug)
 
+/*
+		
+		// placeholder for legacy buffers, should remove them in the future
+		size_t chunk_size = required<GeometryState>(P);
+		char* chunkptr = geometryBuffer(chunk_size);
+		GeometryState geomState_legacy = GeometryState::fromChunk(chunkptr, P);
+		size_t img_chunk_size = required<ImageState>(width * height);
+		char* img_chunkptr = imageBuffer(img_chunk_size);
+		ImageState imgState_legacy = ImageState::fromChunk(img_chunkptr, width * height);
+		size_t binning_chunk_size = required<BinningState>(num_rendered);
+		char* binning_chunkptr = binningBuffer(binning_chunk_size);
+		BinningState binningState_legacy = BinningState::fromChunk(binning_chunkptr, num_rendered);
+
+		// Copy the buffers used to legacy buffers, this may be a bit slow, should change to a better way in the future
+		CHECK_CUDA(cudaMemcpy(geomState_legacy.depths, geomState.depths, P * sizeof(float), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(geomState_legacy.clamped, geomState.clamped, P * 3 * sizeof(float), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(geomState_legacy.internal_radii, geomState.internal_radii, P * sizeof(int), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(geomState_legacy.means2D, geomState.means2D, P * sizeof(float2), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(geomState_legacy.cov3D, geomState.cov3D, P * 6 * sizeof(float), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(geomState_legacy.conic_opacity, geomState.conic_opacity, P * sizeof(float4), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(geomState_legacy.rgb, geomState.rgb, P * 3 * sizeof(float), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(geomState_legacy.tiles_touched, geomState.tiles_touched, P * sizeof(int), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(geomState_legacy.point_offsets, geomState.point_offsets, P * sizeof(int), cudaMemcpyDeviceToDevice), debug);
+
+		CHECK_CUDA(cudaMemcpy(imgState_legacy.accum_alpha, imgState.accum_alpha, width * height * sizeof(float), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(imgState_legacy.n_contrib, imgState.n_contrib, width * height * sizeof(int), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(imgState_legacy.ranges, imgState.ranges, width * height * sizeof(uint2), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(imgState_legacy.n_intersections, imgState.n_intersections, width * height * sizeof(uint32_t), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(imgState_legacy.n_intersections_sorted, imgState.n_intersections_sorted, width * height * sizeof(uint32_t), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(imgState_legacy.tile_AMR_levels, imgState.tile_AMR_levels, width * height * sizeof(uint32_t), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(imgState_legacy.tile_AMR_levels_last, imgState.tile_AMR_levels_last, width * height * sizeof(uint32_t), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(imgState_legacy.tile_AMR_levels_current, imgState.tile_AMR_levels_current, width * height * sizeof(uint32_t), cudaMemcpyDeviceToDevice), debug);
+
+		CHECK_CUDA(cudaMemcpy(binningState_legacy.point_list, binningState.point_list, num_rendered * sizeof(int), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(binningState_legacy.point_list_unsorted, binningState.point_list_unsorted, num_rendered * sizeof(int), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(binningState_legacy.point_list_keys, binningState.point_list_keys, num_rendered * sizeof(uint64_t), cudaMemcpyDeviceToDevice), debug);
+		CHECK_CUDA(cudaMemcpy(binningState_legacy.point_list_keys_unsorted, binningState.point_list_keys_unsorted, num_rendered * sizeof(uint64_t), cudaMemcpyDeviceToDevice), debug);
+*/
 		
 		// prepare for the next step, set tile_AMR_levels_last to 1, and reduce tile_AMR_levels by 2 (if >2, else set to 1)
-		setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels, num_tiles);
+		setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels_current, imgState.tile_AMR_levels, num_tiles);
 		return num_rendered;
 	}
 
 	// else, we still need preprocess
+	if (debug) {
+		std::cout << "CudaRasterizer::Rasterizer::forward() Regular rendering" << std::endl;
+	}
 
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -416,6 +465,9 @@ int CudaRasterizer::Rasterizer::forward(
 		throw std::runtime_error("For non-RGB, provide precomputed Gaussian colors!");
 	}
 
+	if (debug){
+		std::cout << "CudaRasterizer::Rasterizer::forward() Preprocessing" << std::endl;
+	}
 	// Run preprocessing per-Gaussian (transformation, bounding, conversion of SHs to RGB)
 	CHECK_CUDA(FORWARD::preprocess(
 		P, D, M,
@@ -452,10 +504,17 @@ int CudaRasterizer::Rasterizer::forward(
 	int num_rendered;
 	CHECK_CUDA(cudaMemcpy(&num_rendered, geomState.point_offsets + P - 1, sizeof(int), cudaMemcpyDeviceToHost), debug);
 
+	if (debug){
+		std::cout << "CudaRasterizer::Rasterizer::forward() num_rendered: " << num_rendered << " in foveaStep: " << foveaStep << std::endl;
+	}
+
 	size_t binning_chunk_size = required<BinningState>(num_rendered);
 	char* binning_chunkptr = binningBuffer(binning_chunk_size);
 	BinningState binningState = BinningState::fromChunk(binning_chunkptr, num_rendered);
 
+	if (debug){
+		std::cout << "CudaRasterizer::Rasterizer::forward() duplicateWithKeys" << std::endl;
+	}
 	// For each instance to be rendered, produce adequate [ tile | depth ] key 
 	// and corresponding dublicated Gaussian indices to be sorted
 	duplicateWithKeys << <(P + 255) / 256, 256 >> > (
@@ -471,6 +530,9 @@ int CudaRasterizer::Rasterizer::forward(
 
 	int bit = getHigherMsb(tile_grid.x * tile_grid.y);
 
+	if(debug){
+		std::cout << "CudaRasterizer::Rasterizer::forward() SortPairs" << std::endl;
+	}
 	// Sort complete list of (duplicated) Gaussian indices by keys
 	CHECK_CUDA(cub::DeviceRadixSort::SortPairs(
 		binningState.list_sorting_space,
@@ -481,6 +543,9 @@ int CudaRasterizer::Rasterizer::forward(
 
 	CHECK_CUDA(cudaMemset(imgState.ranges, 0, tile_grid.x * tile_grid.y * sizeof(uint2)), debug);
 
+	if(debug){
+		std::cout << "CudaRasterizer::Rasterizer::forward() identifyTileRanges" << std::endl;
+	}
 	// Identify start and end of per-tile workloads in sorted list
 	if (num_rendered > 0)
 		identifyTileRanges << <(num_rendered + 255) / 256, 256 >> > (
@@ -497,6 +562,9 @@ int CudaRasterizer::Rasterizer::forward(
 	// CHECK_CUDA(cudaMalloc(&n_intersections, num_tiles * sizeof(uint32_t)), debug);
 	// CHECK_CUDA(cudaMalloc(&n_intersections_sorted, num_tiles * sizeof(uint32_t)), debug);
 
+	if(debug){
+		std::cout << "CudaRasterizer::Rasterizer::forward() calculateIntersections" << std::endl;
+	}
 	// Launch kernel for n_intersections
 	// calculateIntersections<<<(num_tiles + 255) / 256, 256>>>(imgState.ranges, n_intersections, num_tiles);
 	calculateIntersections<<<(num_tiles + 255) / 256, 256>>>(imgState.ranges, imgState.n_intersections, num_tiles);
@@ -535,6 +603,9 @@ int CudaRasterizer::Rasterizer::forward(
 		CHECK_CUDA(cudaMemcpy(&percentile_values[i], imgState.n_intersections_sorted + percentile_indices[i], sizeof(uint32_t), cudaMemcpyDeviceToHost), debug);
 	}
 
+	if(debug){
+		std::cout << "CudaRasterizer::Rasterizer::forward() setAMRLevelsKernel" << std::endl;
+	}
 	// Set AMR levels
 	// setAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(n_intersections, percentile_values, tile_AMR_levels, num_tiles);
 	setAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(imgState.n_intersections, percentile_values, imgState.tile_AMR_levels, num_tiles);
@@ -545,8 +616,11 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
-	const float* out_color_precomp_ptr = out_color_precomp; // these are not set when foveaStep <=0, still need to pass them
+	const float* out_color_precomp_ptr = out_color_precomp != nullptr ? out_color_precomp : out_color;	// these are not set when foveaStep <=0, still need to pass them
 	
+	if(debug){
+		std::cout << "CudaRasterizer::Rasterizer::forward() render" << std::endl;
+	}
 	CHECK_CUDA(FORWARD::render(
 		render_tile_grid, block_for_render,
 		imgState.ranges, imgState.tile_AMR_levels,
@@ -564,10 +638,16 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.tile_AMR_levels_last), debug)
 
 	if (foveaStep == 0 ) {
+		if(debug){
+			std::cout << "CudaRasterizer::Rasterizer::forward() setFoveaAMRLevelsKernel" << std::endl;
+		}
 		// prepare for the next step, set tile_AMR_levels_last to 1, and reduce tile_AMR_levels by 2 (if >2, else set to 1)
-		setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels, num_tiles);
+		setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels_current, imgState.tile_AMR_levels, num_tiles);
 	}
 
+	if(debug){
+			std::cout << "CudaRasterizer::Rasterizer::forward() return" << std::endl;
+		}
 	return num_rendered;
 }
 

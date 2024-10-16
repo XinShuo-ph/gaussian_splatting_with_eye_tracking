@@ -173,10 +173,30 @@ RasterizeGaussiansCUDA(
 		out_color.contiguous().data<float>(),
 		radii.contiguous().data<int>(),
 		debug);
+		if (debug) {
+			std::cout << "RasterizeGaussiansCUDA: forward done" << std::endl;
+		}
   }
 //   return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer);
-	
+    if (foveaStep > 0){ // if entered foveated rendering, use precomputed buffers
+		if (debug) {
+			std::cout << "RasterizeGaussiansCUDA: ParseBuffers" << std::endl;
+		}
+		auto [parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels] = ParseBuffers(geomBuffer_precomp, binningBuffer_precomp, imageBuffer_precomp, P, W, H);	
+		if (debug) {
+			std::cout << "RasterizeGaussiansCUDA: return" << std::endl;
+		}
+		return std::make_tuple(rendered, out_color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer_precomp, binningBuffer_precomp, imageBuffer_precomp);
+
+	}
+	// otherwise, same as standard 3DGS
+	if (debug) {
+		std::cout << "RasterizeGaussiansCUDA: ParseBuffers" << std::endl;
+	}
 	auto [parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels] = ParseBuffers(geomBuffer, binningBuffer, imgBuffer, P, W, H);
+	if (debug) {
+		std::cout << "RasterizeGaussiansCUDA: return" << std::endl;
+	}
 	return std::make_tuple(rendered, out_color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer);
 }
 

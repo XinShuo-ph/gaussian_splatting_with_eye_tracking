@@ -4,8 +4,7 @@ from scene import Scene
 import os
 from tqdm import tqdm
 from os import makedirs
-from gaussian_renderer_amr import render
-import torchvision
+from gaussian_renderer_amr import render_once
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
@@ -53,7 +52,7 @@ for ratio in [1]:
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         time = 0
         for i in range(5):
-            rendering = render(view, gaussians, pipeline, background,starter = starter, ender= ender)["render"]
+            rendering = render_once(view, gaussians, pipeline, background,starter = starter, ender= ender)["render"]
             torch.cuda.synchronize()
             time += starter.elapsed_time(ender)
         # count fps every 5 frames

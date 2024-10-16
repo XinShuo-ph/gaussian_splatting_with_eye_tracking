@@ -131,17 +131,42 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.debug
         )
 
-        # Invoke C++/CUDA rasterizer
-        if raster_settings.debug:
-            cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
-            try:
-                num_rendered, color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer= _C.rasterize_gaussians(*args)
-            except Exception as ex:
-                torch.save(cpu_args, "snapshot_fw.dump")
-                print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
-                raise ex
-        else:
-            num_rendered, color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer= _C.rasterize_gaussians(*args)
+        # turn off the original debug for now
+
+        # # Invoke C++/CUDA rasterizer
+        # if raster_settings.debug:
+        #     cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
+        #     try:
+        #         num_rendered, color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer= _C.rasterize_gaussians(*args)
+        #     except Exception as ex:
+        #         torch.save(cpu_args, "snapshot_fw.dump")
+        #         print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
+        #         raise ex
+        # else:
+        #     num_rendered, color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer= _C.rasterize_gaussians(*args)
+        
+        
+        num_rendered, color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer= _C.rasterize_gaussians(*args)
+
+
+
+        # # Ensure correct types without conversion
+        # if raster_settings.debug:
+        #     # assert radii.dtype == torch.int32
+        #     # assert parsed_point_list.dtype == torch.int32
+        #     # assert parsed_ranges.dtype == torch.int32
+        #     # assert parsed_tile_AMR_levels.dtype == torch.int32
+        #     # assert geomBuffer.dtype == torch.int8
+        #     # assert binningBuffer.dtype == torch.int8
+        #     # assert imgBuffer.dtype == torch.int8
+        #     # print the dtype
+        #     print("radii.dtype: ", radii.dtype)
+        #     print("parsed_point_list.dtype: ", parsed_point_list.dtype)
+        #     print("parsed_ranges.dtype: ", parsed_ranges.dtype)
+        #     print("parsed_tile_AMR_levels.dtype: ", parsed_tile_AMR_levels.dtype)
+        #     print("geomBuffer.dtype: ", geomBuffer.dtype)
+        #     print("binningBuffer.dtype: ", binningBuffer.dtype)
+        #     print("imgBuffer.dtype: ", imgBuffer.dtype)
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
@@ -237,7 +262,7 @@ class GaussianRasterizer(nn.Module):
         return visible
 
     def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, scales = None, rotations = None, cov3D_precomp = None,
-                foveaStep = 0,
+                foveaStep = int(0),
                 out_color_precomp = None,
                 radii_precomp = None,
                 means2D_precomp = None,
@@ -270,11 +295,11 @@ class GaussianRasterizer(nn.Module):
             rotations = torch.Tensor([])
         if cov3D_precomp is None:
             cov3D_precomp = torch.Tensor([])
-        
+
         if out_color_precomp is None:
             out_color_precomp = torch.Tensor([])
         if radii_precomp is None:
-            radii_precomp = torch.Tensor([])
+            radii_precomp = torch.Tensor([]).to(torch.int32)
         if means2D_precomp is None:
             means2D_precomp = torch.Tensor([])
         if conic_opacity_precomp is None:
@@ -282,31 +307,31 @@ class GaussianRasterizer(nn.Module):
         if geom_rgb_precomp is None:
             geom_rgb_precomp = torch.Tensor([])
         if point_list_precomp is None:
-            point_list_precomp = torch.Tensor([])
+            point_list_precomp = torch.Tensor([]).to(torch.int32)
         if ranges_precomp is None:
-            ranges_precomp = torch.Tensor([])
+            ranges_precomp = torch.Tensor([]).to(torch.int32)
         if tile_AMR_levels_last is None:
-            tile_AMR_levels_last = torch.Tensor([])
+            tile_AMR_levels_last = torch.Tensor([]).to(torch.int32)
         if tile_AMR_levels_current is None:
-            tile_AMR_levels_current = torch.Tensor([])
+            tile_AMR_levels_current = torch.Tensor([]).to(torch.int32)
         if geomBuffer_precomp is None:
-            geomBuffer_precomp = torch.Tensor([])
+            geomBuffer_precomp = torch.Tensor([]).to(torch.uint8)
         if binningBuffer_precomp is None:
-            binningBuffer_precomp = torch.Tensor([])
+            binningBuffer_precomp = torch.Tensor([]).to(torch.uint8)
         if imageBuffer_precomp is None:
-            imageBuffer_precomp = torch.Tensor([])
+            imageBuffer_precomp = torch.Tensor([]).to(torch.uint8)
+            # set the buffer type to char (int8?)
+        #     geomBuffer_precomp = geomBuffer_precomp.to(torch.int8)
+        #     binningBuffer_precomp = binningBuffer_precomp.to(torch.int8)
+        #     imageBuffer_precomp = imageBuffer_precomp.to(torch.int8)
 
-        foveaStep = int(foveaStep)
-        radii_precomp = radii_precomp.to(torch.int32)
-        point_list_precomp = point_list_precomp.to(torch.int32)
-        ranges_precomp = ranges_precomp.to(torch.int32)
-        tile_AMR_levels_last = tile_AMR_levels_last.to(torch.int32)
-        tile_AMR_levels_current = tile_AMR_levels_current.to(torch.int32)
+        # foveaStep = int(foveaStep)
+        # radii_precomp = radii_precomp.to(torch.int32)
+        # point_list_precomp = point_list_precomp.to(torch.int32)
+        # ranges_precomp = ranges_precomp.to(torch.int32)
+        # tile_AMR_levels_last = tile_AMR_levels_last.to(torch.int32)
+        # tile_AMR_levels_current = tile_AMR_levels_current.to(torch.int32)
 
-        # set the buffer type to char (int8?)
-        geomBuffer_precomp = geomBuffer_precomp.to(torch.int8)
-        binningBuffer_precomp = binningBuffer_precomp.to(torch.int8)
-        imageBuffer_precomp = imageBuffer_precomp.to(torch.int8)
 
         # Invoke C++/CUDA rasterization routine
         return rasterize_gaussians(

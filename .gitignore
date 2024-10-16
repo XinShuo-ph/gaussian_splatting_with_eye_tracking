@@ -11,3 +11,5 @@ tandt
 tandt_db.zip
 */_pycache_/
 *.png
+fpslog.txt
+*.dump

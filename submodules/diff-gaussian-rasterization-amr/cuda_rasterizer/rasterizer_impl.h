@@ -53,6 +53,7 @@ namespace CudaRasterizer
 		uint32_t* n_intersections_sorted;
 		uint32_t* tile_AMR_levels;
 		uint32_t* tile_AMR_levels_last;
+		uint32_t* tile_AMR_levels_current;
 
 		static ImageState fromChunk(char*& chunk, size_t N);
 	};

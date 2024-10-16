@@ -40,6 +40,11 @@ print("Rendering " + args.model_path)
 safe_state(args.quiet)
 mydataset = model.extract(args)
 
+
+
+pipeline.debug = True
+
+
 # render the acurate image for reference
 gaussians = GaussianModel(mydataset.sh_degree) # create an empty gaussian model
 scene = Scene(mydataset, gaussians, load_iteration=args.iteration, shuffle=False) # load the model and cameras
