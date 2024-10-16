@@ -190,3 +190,34 @@ plt.legend()
 plt.ylim(10,120)
 plt.savefig('fps_benchmark_log_amr_fovsteps.png')
 
+# Calculate cumulative lapse times in milliseconds
+lapse_times = []
+for i in range(len(pix_horizon)):
+    lapse0 = 1000 / fps_avg0[i]
+    lapse1 = 1000 / fps_avg1[i]
+    lapse2 = 1000 / fps_avg2[i]
+    lapse3 = 1000 / fps_avg3[i]
+    lapse_times.append([lapse0, lapse1, lapse2, lapse3])
+
+lapse_times = np.array(lapse_times)
+
+# Create stacked bar plot
+plt.figure(figsize=(8, 6))
+bar_width = 200
+colors = ['r', 'g', 'b', 'y']
+labels = ['Preprocess + Level 1', 'Level 2', 'Level 3', 'Level 4']
+
+bottom = np.zeros(len(pix_horizon))
+for i in range(4):
+    plt.bar(pix_horizon, lapse_times[:, i], bar_width, bottom=bottom, color=colors[i], label=labels[i])
+    bottom += lapse_times[:, i]
+
+
+plt.xlabel('Horizontal Resolution (16:9 aspect ratio)',fontsize=16)
+plt.ylabel('Cumulative Lapse Time (ms)',fontsize=16)
+# plt.title('Cumulative Lapse Time by Rendering Step')
+plt.legend(loc='upper left', fontsize=16)
+plt.xticks(pix_horizon, rotation=45,fontsize=16)
+plt.yticks(fontsize=16)
+plt.tight_layout()
+plt.savefig('fps_amr_lapse_fovsteps.png')

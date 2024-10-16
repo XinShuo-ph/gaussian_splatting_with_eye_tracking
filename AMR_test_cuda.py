@@ -10,12 +10,10 @@ from scene import Scene
 import os
 from tqdm import tqdm
 from os import makedirs
-from gaussian_renderer_amr import render
 import torchvision
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
-from gaussian_renderer_amr import GaussianModel
 
 
 pix_x = 1920
@@ -24,7 +22,7 @@ camera_idx = 0
 tile_level = 5 # 2^tile_level is the number of pixels on a tile edge
 AMR_factor = 0.5
 AMR_MAX_LEVELS_count = 4
-AMR_level_percentiles = [0.1, 0.25, 0.7,1.0]
+AMR_level_percentiles = [0.1, 0.4, 0.9,1.0]
 
 
 # same args as render.py
@@ -44,6 +42,13 @@ mydataset = model.extract(args)
 
 pipeline.debug = True
 
+
+if pipeline.debug:
+    from gaussian_renderer_amr_debug import render
+    from gaussian_renderer_amr_debug import GaussianModel
+else:
+    from gaussian_renderer_amr import render
+    from gaussian_renderer_amr import GaussianModel
 
 # render the acurate image for reference
 gaussians = GaussianModel(mydataset.sh_degree) # create an empty gaussian model
@@ -261,3 +266,45 @@ plt.xlim(-1,view.image_width)
 plt.ylim(-1,view.image_height)
 plt.gca().invert_yaxis()
 plt.savefig("amr_render_tile_AMR_view%d.png"%camera_idx)
+
+
+# cross check with the AMR_levels output by cuda code
+
+tiles_AMRlevel_cuda = result["tile_AMR_levels"].cpu().detach().numpy()
+tiles_AMRlevel_image_cuda = np.zeros((view.image_height, view.image_width)) 
+
+for x in range(tiles_num_x):
+    for y in range(tiles_num_y):
+        start_x = x * 2**tile_level
+        end_x = min((x + 1) * 2**tile_level, view.image_width)
+        start_y = y * 2**tile_level
+        end_y = min((y + 1) * 2**tile_level, view.image_height)
+        tiles_AMRlevel_image_cuda[start_y:end_y, start_x:end_x] = tiles_AMRlevel_cuda[x+ y * tiles_num_x ]
+
+
+
+
+plt.figure().set_size_inches(10,6)
+plt.imshow(rendering.cpu().detach().numpy().transpose(1,2,0))
+
+# Overlay the tile count image with AMR level, note that the level are discrete numbers 1,2,3,4, adjust the cmap accordingly
+
+# Define discrete colormap
+cmap = ListedColormap(['blue', 'cyan', 'yellow', 'red'])
+bounds = [0.5, 1.5, 2.5, 3.5, 4.5]
+norm = BoundaryNorm(bounds, cmap.N)
+plt.imshow(tiles_AMRlevel_image_cuda, cmap=cmap, norm=norm, alpha=0.5)
+
+# Add colorbar to show the scale of AMR levels
+plt.colorbar(label='AMR level', ticks=[1, 2, 3, 4])
+
+plt.xlabel("horizontal pixel", fontsize=16)
+plt.ylabel("vertical pixel", fontsize=16)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
+
+plt.xlim(-1,view.image_width)
+plt.ylim(-1,view.image_height)
+plt.gca().invert_yaxis()
+plt.savefig("amr_render_tile_AMR_cuda_view%d.png"%camera_idx)
+
