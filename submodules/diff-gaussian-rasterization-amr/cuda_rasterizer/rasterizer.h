@@ -50,19 +50,20 @@ namespace CudaRasterizer
 			const bool prefiltered,
 			const int foveaStep,
 			const float* out_color_precomp,
-			const int* radii_precomp,
-			const float* means2D_precomp,
-			const float* conic_opacity_precomp,
-			const float* geom_rgb_precomp,
-			const int* point_list_precomp,
-			const int* ranges_precomp,
-			const int* tile_AMR_levels_last,
-			const int* tile_AMR_levels_current,
+			// const int* radii_precomp,
+			// const float* means2D_precomp,
+			// const float* conic_opacity_precomp,
+			// const float* geom_rgb_precomp,
+			// const int* point_list_precomp,
+			// const int* ranges_precomp,
+			// const int* tile_AMR_levels_last,
+			// const int* tile_AMR_levels_current,
 			char* geom_buffer,
 			char* binning_buffer,
 			char* image_buffer,
 			float* out_color,
 			int* radii = nullptr,
+			const bool interpolate_image = false, // whether to interpolate the image or leave unrendered blank
 			bool debug = false);
 
 		static void backward(

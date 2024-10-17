@@ -9,14 +9,21 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import numpy as np
+import torchvision
+
 import torch
 import math
 from diff_gaussian_rasterization_amr import GaussianRasterizationSettings, GaussianRasterizer
+
+from diff_gaussian_rasterization_amr import _RasterizeGaussians
+
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, 
-           starter=None,ender=None, starters=None, enders=None):
+           starter=None,ender=None, starters=None, enders=None,
+           interpolate_image = False):
     """
     Render the scene. 
     
@@ -51,7 +58,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # print(raster_settings.debug)
 
-    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+    # rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+    rawrasterizer = _RasterizeGaussians
 
     means3D = pc.get_xyz
     means2D = screenspace_points
@@ -100,8 +108,33 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # I record times here because the color and cov are not computed in python when testing fps
     # loading gaussian model parameters in python took similar time as rendering 
     # this is also what fov-3DGS does: Fov-3DGS/fov3dgs/gaussian_renderer_fov_mmfr/__init__.py:72
+
+
+    # when using the raw rasterizer
+    if shs is None:
+        shs = torch.Tensor([])
+    if colors_precomp is None:
+        colors_precomp = torch.Tensor([])
+
+    if scales is None:
+        scales = torch.Tensor([])
+    if rotations is None:
+        rotations = torch.Tensor([])
+    if cov3D_precomp is None:
+        cov3D_precomp = torch.Tensor([])
+
+    out_color_precomp = torch.Tensor([])
+
+
+
     if pipe.debug:
         print(" fovea step 0 ")
+    foveaStep = 0
+    buffered = False
+    geomBuffer_precomp = torch.Tensor([]).to(torch.uint8)
+    binningBuffer_precomp = torch.Tensor([]).to(torch.uint8)
+    imageBuffer_precomp = torch.Tensor([]).to(torch.uint8)
+
     if starter is not None:
         starter.record()
 
@@ -109,39 +142,68 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         starters[0].record()
 
 
-    radii = torch.empty(0, dtype=torch.int32, device='cuda')
-    parsed_point_list = torch.empty(0, dtype=torch.int32, device='cuda')
-    parsed_ranges = torch.empty(0, dtype=torch.int32, device='cuda')
-    parsed_tile_AMR_levels = torch.empty(0, dtype=torch.int32, device='cuda')
-    geomBuffer = torch.empty(0, dtype=torch.int8, device='cuda')
-    binningBuffer = torch.empty(0, dtype=torch.int8, device='cuda')
-    imgBuffer = torch.empty(0, dtype=torch.int8, device='cuda')
+    # radii = torch.empty(0, dtype=torch.int32, device='cuda')
+    # parsed_point_list = torch.empty(0, dtype=torch.int32, device='cuda')
+    # parsed_ranges = torch.empty(0, dtype=torch.int32, device='cuda')
+    # parsed_tile_AMR_levels = torch.empty(0, dtype=torch.int32, device='cuda')
+    # geomBuffer = torch.empty(0, dtype=torch.int8, device='cuda')
+    # binningBuffer = torch.empty(0, dtype=torch.int8, device='cuda')
+    # imgBuffer = torch.empty(0, dtype=torch.int8, device='cuda')
 
     
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer= rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp,
-        foveaStep = int(0),
-        out_color_precomp = None,
-        radii_precomp = None,
-        means2D_precomp = None,
-        conic_opacity_precomp = None,
-        geom_rgb_precomp = None,
-        point_list_precomp = None,
-        ranges_precomp = None,
-        tile_AMR_levels_last = None,
-        tile_AMR_levels_current = None,
-        geomBuffer_precomp = None,
-        binningBuffer_precomp = None,
-        imageBuffer_precomp = None
+    # rendered_image, radii = rasterizer(
+    #     means3D = means3D,
+    #     means2D = means2D,
+    #     shs = shs,
+    #     colors_precomp = colors_precomp,
+    #     opacities = opacity,
+    #     scales = scales,
+    #     rotations = rotations,
+    #     cov3D_precomp = cov3D_precomp,
+    #     foveaStep = int(0),
+    #     out_color_precomp = None,
+    #     # radii_precomp = None,
+    #     # means2D_precomp = None,
+    #     # conic_opacity_precomp = None,
+    #     # geom_rgb_precomp = None,
+    #     # point_list_precomp = None,
+    #     # ranges_precomp = None,
+    #     # tile_AMR_levels_last = None,
+    #     # tile_AMR_levels_current = None,
+    #     # geomBuffer_precomp = None,
+    #     # binningBuffer_precomp = None,
+    #     # imageBuffer_precomp = None,
+    #     buffered = False,
+    #     interpolate_image = interpolate_image
+    # )
+
+    # step 0: compute only the buffers
+    rendered_image0, radii, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
+        means3D,
+        means2D,
+        shs,
+        colors_precomp,
+        opacity,
+        scales,
+        rotations,
+        cov3D_precomp,
+            foveaStep,
+            out_color_precomp,
+            # radii_precomp,
+            # means2D_precomp,
+            # conic_opacity_precomp,
+            # geom_rgb_precomp,
+            # point_list_precomp,
+            # ranges_precomp,
+            # tile_AMR_levels_last,
+            # tile_AMR_levels_current,
+            geomBuffer_precomp,
+            binningBuffer_precomp,
+            imageBuffer_precomp,
+            False, # interpolate_image
+        raster_settings,
     )
         
 
@@ -149,20 +211,27 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if enders is not None:
         enders[0].record()
 
+    if pipe.debug:
+        reds = rendered_image0[0].cpu().detach().numpy()
+        redmask = reds == 0
+        print("Skipped pixels: ", np.sum(redmask))
+        print("Total pixels: ", redmask.size) 
+        torchvision.utils.save_image(rendered_image0, "tmp0.png")
+
     # radii = radii.to(torch.int32)
     # parsed_point_list = parsed_point_list.to(torch.int32)
     # parsed_ranges = parsed_ranges.to(torch.int32)
     # parsed_tile_AMR_levels = parsed_tile_AMR_levels.to(torch.int32)
 
     # check all the dtypes that should be int
-    if pipe.debug:
-        print("radii dtype: ", radii.dtype)
-        print("parsed_point_list dtype: ", parsed_point_list.dtype)
-        print("parsed_ranges dtype: ", parsed_ranges.dtype)
-        print("parsed_tile_AMR_levels dtype: ", parsed_tile_AMR_levels.dtype)
-        print("geomBuffer dtype: ", geomBuffer.dtype)
-        print("binningBuffer dtype: ", binningBuffer.dtype)
-        print("imgBuffer dtype: ", imgBuffer.dtype)
+    # if pipe.debug:
+        # print("radii dtype: ", radii.dtype)
+        # print("parsed_point_list dtype: ", parsed_point_list.dtype)
+        # print("parsed_ranges dtype: ", parsed_ranges.dtype)
+        # print("parsed_tile_AMR_levels dtype: ", parsed_tile_AMR_levels.dtype)
+        # print("geomBuffer dtype: ", geomBuffer.dtype)
+        # print("binningBuffer dtype: ", binningBuffer.dtype)
+        # print("imgBuffer dtype: ", imgBuffer.dtype)
 
     # make a deep copy of the torch tensor parsed_tile_AMR_levels and reduce by 3 (if <1, floor to 1) to get the AMR levels of step 0
     # parsed_tile_AMR_levels_step0 = parsed_tile_AMR_levels.clone()
@@ -175,6 +244,18 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # TODO: if ourside the current fovea, set to same as last step
 
 
+
+    foveaStep = 1
+    out_color_precomp = rendered_image0 # should be all 0
+    geomBuffer_precomp = geomBuffer
+    binningBuffer_precomp = binningBuffer
+    imageBuffer_precomp = imageBuffer
+    if pipe.debug:
+        reds = out_color_precomp[0].cpu().detach().numpy()
+        redmask = reds == 0
+        print("combined, Skipped pixels: ", np.sum(redmask))
+        print("combined, Total pixels: ", redmask.size) 
+    
     if pipe.debug:
         print(" fovea step 1 ")
 
@@ -183,123 +264,347 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image1, _, _, _, _, _, _, _, geomBuffer1, binningBuffer1, imgBuffer1 = rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp,
-        foveaStep = 1,
-        out_color_precomp = rendered_image,
-        radii_precomp = radii,
-        means2D_precomp = parsed_means2D,
-        conic_opacity_precomp = parsed_conic_opacity,
-        geom_rgb_precomp = parsed_geom_rgb,
-        point_list_precomp = parsed_point_list,
-        ranges_precomp = parsed_ranges,
-        # tile_AMR_levels_last = parsed_tile_AMR_levels_step0,
-        # tile_AMR_levels_current = parsed_tile_AMR_levels_step1,
-        geomBuffer_precomp = geomBuffer,
-        binningBuffer_precomp = binningBuffer,
-        imageBuffer_precomp = imgBuffer
+    # rendered_image1, _ = rasterizer(
+    #     means3D = means3D,
+    #     means2D = means2D,
+    #     shs = shs,
+    #     colors_precomp = colors_precomp,
+    #     opacities = opacity,
+    #     scales = scales,
+    #     rotations = rotations,
+    #     cov3D_precomp = cov3D_precomp,
+    #     foveaStep = 1,
+    #     out_color_precomp = rendered_image,
+    #     # radii_precomp = radii,
+    #     # means2D_precomp = parsed_means2D,
+    #     # conic_opacity_precomp = parsed_conic_opacity,
+    #     # geom_rgb_precomp = parsed_geom_rgb,
+    #     # point_list_precomp = parsed_point_list,
+    #     # ranges_precomp = parsed_ranges,
+    #     # tile_AMR_levels_last = parsed_tile_AMR_levels_step0,
+    #     # tile_AMR_levels_current = parsed_tile_AMR_levels_step1,
+    #     # geomBuffer_precomp = geomBuffer,
+    #     # binningBuffer_precomp = binningBuffer,
+    #     # imageBuffer_precomp = imgBuffer,
+    #     buffered = True,
+    #     interpolate_image = interpolate_image
+    # )
+
+    # TODO: actually only imageBuffer changes (recording last and current levels)
+    # step 1: compute the lowest quality
+    rendered_image1, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
+        means3D,
+        means2D,
+        shs,
+        colors_precomp,
+        opacity,
+        scales,
+        rotations,
+        cov3D_precomp,
+            foveaStep,
+            out_color_precomp,
+            # radii_precomp,
+            # means2D_precomp,
+            # conic_opacity_precomp,
+            # geom_rgb_precomp,
+            # point_list_precomp,
+            # ranges_precomp,
+            # tile_AMR_levels_last,
+            # tile_AMR_levels_current,
+            geomBuffer_precomp,
+            binningBuffer_precomp,
+            imageBuffer_precomp,
+            False, # interpolate_image
+        raster_settings,
     )
         
     if enders is not None:
         enders[1].record()
+
+    if pipe.debug:
+        reds = rendered_image1[0].cpu().detach().numpy()
+        redmask = reds == 0
+        print("Skipped pixels: ", np.sum(redmask))
+        print("Total pixels: ", redmask.size) 
+        torchvision.utils.save_image(rendered_image1, "tmp1.png")
+
         
     # similarly for step 2, except -=1
     # parsed_tile_AMR_levels_step2 = parsed_tile_AMR_levels.clone()
     # parsed_tile_AMR_levels_step2 -= 1
     # parsed_tile_AMR_levels_step2[parsed_tile_AMR_levels_step2 < 1] = 1
 
+
+
+    foveaStep = 2
+    buffered = True
+    out_color_precomp = out_color_precomp + rendered_image1
+    geomBuffer_precomp = geomBuffer
+    binningBuffer_precomp = binningBuffer
+    imageBuffer_precomp = imageBuffer
+    if pipe.debug:
+        reds = out_color_precomp[0].cpu().detach().numpy()
+        redmask = reds == 0
+        print("combined, Skipped pixels: ", np.sum(redmask))
+        print("combined, Total pixels: ", redmask.size) 
+    
+    
     if pipe.debug:
         print(" fovea step 2 ")
-
     if starters is not None:
         starters[2].record()
     
-    rendered_image2, _, _, _, _, _, _, _, geomBuffer2, binningBuffer2, imgBuffer2= rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp,
-        foveaStep = 2,
-        out_color_precomp = rendered_image1,
-        radii_precomp = radii,
-        means2D_precomp = parsed_means2D,
-        conic_opacity_precomp = parsed_conic_opacity,
-        geom_rgb_precomp = parsed_geom_rgb,
-        point_list_precomp = parsed_point_list,
-        ranges_precomp = parsed_ranges,
-        # tile_AMR_levels_last = parsed_tile_AMR_levels_step1,
-        # tile_AMR_levels_current = parsed_tile_AMR_levels_step2,
-        geomBuffer_precomp = geomBuffer1,
-        binningBuffer_precomp = binningBuffer1,
-        imageBuffer_precomp = imgBuffer1
+    # rendered_image2, _, = rasterizer(
+    #     means3D = means3D,
+    #     means2D = means2D,
+    #     shs = shs,
+    #     colors_precomp = colors_precomp,
+    #     opacities = opacity,
+    #     scales = scales,
+    #     rotations = rotations,
+    #     cov3D_precomp = cov3D_precomp,
+    #     foveaStep = 2,
+    #     out_color_precomp = rendered_image1,
+    #     # radii_precomp = radii,
+    #     # means2D_precomp = parsed_means2D,
+    #     # conic_opacity_precomp = parsed_conic_opacity,
+    #     # geom_rgb_precomp = parsed_geom_rgb,
+    #     # point_list_precomp = parsed_point_list,
+    #     # ranges_precomp = parsed_ranges,
+    #     # tile_AMR_levels_last = parsed_tile_AMR_levels_step1,
+    #     # tile_AMR_levels_current = parsed_tile_AMR_levels_step2,
+    #     # geomBuffer_precomp = geomBuffer1,
+    #     # binningBuffer_precomp = binningBuffer1,
+    #     # imageBuffer_precomp = imgBuffer1,
+    #     buffered = True,
+    #     interpolate_image = interpolate_image
+    # )
+    
+    
+    rendered_image2, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
+        means3D,
+        means2D,
+        shs,
+        colors_precomp,
+        opacity,
+        scales,
+        rotations,
+        cov3D_precomp,
+            foveaStep,
+            out_color_precomp,
+            # radii_precomp,
+            # means2D_precomp,
+            # conic_opacity_precomp,
+            # geom_rgb_precomp,
+            # point_list_precomp,
+            # ranges_precomp,
+            # tile_AMR_levels_last,
+            # tile_AMR_levels_current,
+            geomBuffer_precomp,
+            binningBuffer_precomp,
+            imageBuffer_precomp,
+            False, # interpolate_image
+        raster_settings,
     )
 
     if enders is not None:
         enders[2].record()
 
+    
+    if pipe.debug:
+        reds = rendered_image2[0].cpu().detach().numpy()
+        redmask = reds == 0
+        print("Skipped pixels: ", np.sum(redmask))
+        print("Total pixels: ", redmask.size) 
+        torchvision.utils.save_image(rendered_image2, "tmp2.png")
+
+
     # step 3 is the same as parsed_tile_AMR_levels
     # parsed_tile_AMR_levels_step3 = parsed_tile_AMR_levels.clone()
 
+
+    foveaStep = 3
+    out_color_precomp = out_color_precomp + rendered_image2
+    geomBuffer_precomp = geomBuffer
+    binningBuffer_precomp = binningBuffer
+    imageBuffer_precomp = imageBuffer
+    if pipe.debug:
+        reds = out_color_precomp[0].cpu().detach().numpy()
+        redmask = reds == 0
+        print("combined, Skipped pixels: ", np.sum(redmask))
+        print("combined, Total pixels: ", redmask.size) 
+    
+    
     if pipe.debug:
         print(" fovea step 3 ")
-
     if starters is not None:
         starters[3].record()
 
-    rendered_image3, _, _, _, _, _, _, _, geomBuffer3, binningBuffer3, imgBuffer3= rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp,
-        foveaStep = 3,
-        out_color_precomp = rendered_image2,
-        radii_precomp = radii,
-        means2D_precomp = parsed_means2D,
-        conic_opacity_precomp = parsed_conic_opacity,
-        geom_rgb_precomp = parsed_geom_rgb,
-        point_list_precomp = parsed_point_list,
-        ranges_precomp = parsed_ranges,
-        # tile_AMR_levels_last = parsed_tile_AMR_levels_step2,
-        # tile_AMR_levels_current = parsed_tile_AMR_levels_step3,
-        geomBuffer_precomp = geomBuffer2,
-        binningBuffer_precomp = binningBuffer2,
-        imageBuffer_precomp = imgBuffer2
+    # rendered_image3, _ = rasterizer(
+    #     means3D = means3D,
+    #     means2D = means2D,
+    #     shs = shs,
+    #     colors_precomp = colors_precomp,
+    #     opacities = opacity,
+    #     scales = scales,
+    #     rotations = rotations,
+    #     cov3D_precomp = cov3D_precomp,
+    #     foveaStep = 3,
+    #     out_color_precomp = rendered_image2,
+    #     # radii_precomp = radii,
+    #     # means2D_precomp = parsed_means2D,
+    #     # conic_opacity_precomp = parsed_conic_opacity,
+    #     # geom_rgb_precomp = parsed_geom_rgb,
+    #     # point_list_precomp = parsed_point_list,
+    #     # ranges_precomp = parsed_ranges,
+    #     # tile_AMR_levels_last = parsed_tile_AMR_levels_step2,
+    #     # tile_AMR_levels_current = parsed_tile_AMR_levels_step3,
+    #     # geomBuffer_precomp = geomBuffer2,
+    #     # binningBuffer_precomp = binningBuffer2,
+    #     # imageBuffer_precomp = imgBuffer2,
+    #     buffered = True,
+    #     interpolate_image = interpolate_image
+    # )
+    
+    
+    rendered_image3, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
+        means3D,
+        means2D,
+        shs,
+        colors_precomp,
+        opacity,
+        scales,
+        rotations,
+        cov3D_precomp,
+            foveaStep,
+            out_color_precomp,
+            # radii_precomp,
+            # means2D_precomp,
+            # conic_opacity_precomp,
+            # geom_rgb_precomp,
+            # point_list_precomp,
+            # ranges_precomp,
+            # tile_AMR_levels_last,
+            # tile_AMR_levels_current,
+            geomBuffer_precomp,
+            binningBuffer_precomp,
+            imageBuffer_precomp,
+            False, # interpolate_image
+        raster_settings,
+    )
+    
+
+    if enders is not None:
+        enders[3].record()
+
+
+    if pipe.debug:
+        reds = rendered_image3[0].cpu().detach().numpy()
+        redmask = reds == 0
+        print("Skipped pixels: ", np.sum(redmask))
+        print("Total pixels: ", redmask.size) 
+        torchvision.utils.save_image(rendered_image3, "tmp3.png")
+
+
+    foveaStep = 4
+    out_color_precomp = out_color_precomp + rendered_image3
+    geomBuffer_precomp = geomBuffer
+    binningBuffer_precomp = binningBuffer
+    imageBuffer_precomp = imageBuffer
+    if pipe.debug:
+        reds = out_color_precomp[0].cpu().detach().numpy()
+        redmask = reds == 0
+        print("combined, Skipped pixels: ", np.sum(redmask))
+        print("combined, Total pixels: ", redmask.size) 
+    
+    if pipe.debug:
+        print(" fovea step 4 ")
+
+    if starters is not None:
+        starters[4].record()
+
+    # rendered_image3, _ = rasterizer(
+    #     means3D = means3D,
+    #     means2D = means2D,
+    #     shs = shs,
+    #     colors_precomp = colors_precomp,
+    #     opacities = opacity,
+    #     scales = scales,
+    #     rotations = rotations,
+    #     cov3D_precomp = cov3D_precomp,
+    #     foveaStep = 3,
+    #     out_color_precomp = rendered_image2,
+    #     # radii_precomp = radii,
+    #     # means2D_precomp = parsed_means2D,
+    #     # conic_opacity_precomp = parsed_conic_opacity,
+    #     # geom_rgb_precomp = parsed_geom_rgb,
+    #     # point_list_precomp = parsed_point_list,
+    #     # ranges_precomp = parsed_ranges,
+    #     # tile_AMR_levels_last = parsed_tile_AMR_levels_step2,
+    #     # tile_AMR_levels_current = parsed_tile_AMR_levels_step3,
+    #     # geomBuffer_precomp = geomBuffer2,
+    #     # binningBuffer_precomp = binningBuffer2,
+    #     # imageBuffer_precomp = imgBuffer2,
+    #     buffered = True,
+    #     interpolate_image = interpolate_image
+    # )
+    
+    
+    rendered_image4, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
+        means3D,
+        means2D,
+        shs,
+        colors_precomp,
+        opacity,
+        scales,
+        rotations,
+        cov3D_precomp,
+            foveaStep,
+            out_color_precomp,
+            # radii_precomp,
+            # means2D_precomp,
+            # conic_opacity_precomp,
+            # geom_rgb_precomp,
+            # point_list_precomp,
+            # ranges_precomp,
+            # tile_AMR_levels_last,
+            # tile_AMR_levels_current,
+            geomBuffer_precomp,
+            binningBuffer_precomp,
+            imageBuffer_precomp,
+            interpolate_image,
+        raster_settings,
     )
     
     if ender is not None:
         ender.record()
 
     if enders is not None:
-        enders[3].record()
+        enders[4].record()
 
+    
+    if pipe.debug:
+        reds = rendered_image4[0].cpu().detach().numpy()
+        redmask = reds == 0
+        print("Skipped pixels: ", np.sum(redmask))
+        print("Total pixels: ", redmask.size) 
+        torchvision.utils.save_image(rendered_image4, "tmp4.png")
+
+
+    out_color_precomp = out_color_precomp + rendered_image4
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    return {"render": rendered_image3,
+    return {"render": out_color_precomp,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
-            "radii": radii,
-            "means2D": parsed_means2D,
-            "conic_opacity": parsed_conic_opacity,
-            "geom_rgb": parsed_geom_rgb,
-            "point_list": parsed_point_list,
-            "ranges": parsed_ranges,
-            "tile_AMR_levels": parsed_tile_AMR_levels
+            "radii": radii
+            # "means2D": parsed_means2D,
+            # "conic_opacity": parsed_conic_opacity,
+            # "geom_rgb": parsed_geom_rgb,
+            # "point_list": parsed_point_list,
+            # "ranges": parsed_ranges,
+            # "tile_AMR_levels": parsed_tile_AMR_levels
             }
 
 
@@ -392,7 +697,31 @@ def render_once(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Ten
         starter.record()
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, _, _, _= rasterizer(
+    # rendered_image, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, _, _, _= rasterizer(
+    #     means3D = means3D,
+    #     means2D = means2D,
+    #     shs = shs,
+    #     colors_precomp = colors_precomp,
+    #     opacities = opacity,
+    #     scales = scales,
+    #     rotations = rotations,
+    #     cov3D_precomp = cov3D_precomp,
+    #     foveaStep = int(-2),
+    #     out_color_precomp = None,
+    #     radii_precomp = None,
+    #     means2D_precomp = None,
+    #     conic_opacity_precomp = None,
+    #     geom_rgb_precomp = None,
+    #     point_list_precomp = None,
+    #     ranges_precomp = None,
+    #     tile_AMR_levels_last = None,
+    #     tile_AMR_levels_current = None,
+    #     geomBuffer_precomp = None,
+    #     binningBuffer_precomp = None,
+    #     imageBuffer_precomp = None
+    # )
+
+    rendered_image, radii, _, _, _= rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -401,19 +730,7 @@ def render_once(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Ten
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp,
-        foveaStep = int(-2),
-        out_color_precomp = None,
-        radii_precomp = None,
-        means2D_precomp = None,
-        conic_opacity_precomp = None,
-        geom_rgb_precomp = None,
-        point_list_precomp = None,
-        ranges_precomp = None,
-        tile_AMR_levels_last = None,
-        tile_AMR_levels_current = None,
-        geomBuffer_precomp = None,
-        binningBuffer_precomp = None,
-        imageBuffer_precomp = None
+        foveaStep = int(-2)
     )
         
     if ender is not None:
@@ -428,11 +745,5 @@ def render_once(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Ten
     return {"render": rendered_image,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
-            "radii": radii,
-            "means2D": parsed_means2D,
-            "conic_opacity": parsed_conic_opacity,
-            "geom_rgb": parsed_geom_rgb,
-            "point_list": parsed_point_list,
-            "ranges": parsed_ranges,
-            "tile_AMR_levels": parsed_tile_AMR_levels
+            "radii": radii
             }

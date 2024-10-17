@@ -29,17 +29,18 @@ def rasterize_gaussians(
     cov3Ds_precomp,
         foveaStep,
         out_color_precomp,
-        radii_precomp,
-        means2D_precomp,
-        conic_opacity_precomp,
-        geom_rgb_precomp,
-        point_list_precomp,
-        ranges_precomp,
-        tile_AMR_levels_last,
-        tile_AMR_levels_current,
+        # radii_precomp,
+        # means2D_precomp,
+        # conic_opacity_precomp,
+        # geom_rgb_precomp,
+        # point_list_precomp,
+        # ranges_precomp,
+        # tile_AMR_levels_last,
+        # tile_AMR_levels_current,
         geomBuffer_precomp,
         binningBuffer_precomp,
         imageBuffer_precomp,
+            interpolate_image,
     raster_settings,
 ):
     return _RasterizeGaussians.apply(
@@ -53,17 +54,18 @@ def rasterize_gaussians(
         cov3Ds_precomp,
             foveaStep,
             out_color_precomp,
-            radii_precomp,
-            means2D_precomp,
-            conic_opacity_precomp,
-            geom_rgb_precomp,
-            point_list_precomp,
-            ranges_precomp,
-            tile_AMR_levels_last,
-            tile_AMR_levels_current,
+            # radii_precomp,
+            # means2D_precomp,
+            # conic_opacity_precomp,
+            # geom_rgb_precomp,
+            # point_list_precomp,
+            # ranges_precomp,
+            # tile_AMR_levels_last,
+            # tile_AMR_levels_current,
             geomBuffer_precomp,
             binningBuffer_precomp,
             imageBuffer_precomp,
+            interpolate_image,
         raster_settings,
     )
 
@@ -81,17 +83,18 @@ class _RasterizeGaussians(torch.autograd.Function):
         cov3Ds_precomp,
         foveaStep,
         out_color_precomp,
-        radii_precomp,
-        means2D_precomp,
-        conic_opacity_precomp,
-        geom_rgb_precomp,
-        point_list_precomp,
-        ranges_precomp,
-        tile_AMR_levels_last,
-        tile_AMR_levels_current,
+        # radii_precomp,
+        # means2D_precomp,
+        # conic_opacity_precomp,
+        # geom_rgb_precomp,
+        # point_list_precomp,
+        # ranges_precomp,
+        # tile_AMR_levels_last,
+        # tile_AMR_levels_current,
         geomBuffer_precomp,
         binningBuffer_precomp,
         imageBuffer_precomp,
+        interpolate_image,
         raster_settings,
     ):
 
@@ -117,17 +120,18 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.prefiltered,
             foveaStep,
             out_color_precomp,
-            radii_precomp,
-            means2D_precomp,
-            conic_opacity_precomp,
-            geom_rgb_precomp,
-            point_list_precomp,
-            ranges_precomp,
-            tile_AMR_levels_last,
-            tile_AMR_levels_current,
+            # radii_precomp,
+            # means2D_precomp,
+            # conic_opacity_precomp,
+            # geom_rgb_precomp,
+            # point_list_precomp,
+            # ranges_precomp,
+            # tile_AMR_levels_last,
+            # tile_AMR_levels_current,
             geomBuffer_precomp,
             binningBuffer_precomp,
             imageBuffer_precomp,
+            interpolate_image,
             raster_settings.debug
         )
 
@@ -146,7 +150,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         #     num_rendered, color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer= _C.rasterize_gaussians(*args)
         
         
-        num_rendered, color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer= _C.rasterize_gaussians(*args)
+        num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer= _C.rasterize_gaussians(*args)
 
 
 
@@ -172,7 +176,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
-        return color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer
+        return color, radii, geomBuffer, binningBuffer, imgBuffer
 
     @staticmethod
     def backward(ctx, grad_out_color, _):
@@ -264,17 +268,18 @@ class GaussianRasterizer(nn.Module):
     def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, scales = None, rotations = None, cov3D_precomp = None,
                 foveaStep = int(0),
                 out_color_precomp = None,
-                radii_precomp = None,
-                means2D_precomp = None,
-                conic_opacity_precomp = None,
-                geom_rgb_precomp = None,
-                point_list_precomp = None,
-                ranges_precomp = None,
-                tile_AMR_levels_last = None,
-                tile_AMR_levels_current = None,
+                # radii_precomp = None,
+                # means2D_precomp = None,
+                # conic_opacity_precomp = None,
+                # geom_rgb_precomp = None,
+                # point_list_precomp = None,
+                # ranges_precomp = None,
+                # tile_AMR_levels_last = None,
+                # tile_AMR_levels_current = None,
                 geomBuffer_precomp = None,
                 binningBuffer_precomp = None,
-                imageBuffer_precomp = None):
+                imageBuffer_precomp = None,
+                interpolate_image = True):
         
         raster_settings = self.raster_settings
 
@@ -298,22 +303,22 @@ class GaussianRasterizer(nn.Module):
 
         if out_color_precomp is None:
             out_color_precomp = torch.Tensor([])
-        if radii_precomp is None:
-            radii_precomp = torch.Tensor([]).to(torch.int32)
-        if means2D_precomp is None:
-            means2D_precomp = torch.Tensor([])
-        if conic_opacity_precomp is None:
-            conic_opacity_precomp = torch.Tensor([])
-        if geom_rgb_precomp is None:
-            geom_rgb_precomp = torch.Tensor([])
-        if point_list_precomp is None:
-            point_list_precomp = torch.Tensor([]).to(torch.int32)
-        if ranges_precomp is None:
-            ranges_precomp = torch.Tensor([]).to(torch.int32)
-        if tile_AMR_levels_last is None:
-            tile_AMR_levels_last = torch.Tensor([]).to(torch.int32)
-        if tile_AMR_levels_current is None:
-            tile_AMR_levels_current = torch.Tensor([]).to(torch.int32)
+        # if radii_precomp is None:
+        #     radii_precomp = torch.Tensor([]).to(torch.int32)
+        # if means2D_precomp is None:
+        #     means2D_precomp = torch.Tensor([])
+        # if conic_opacity_precomp is None:
+        #     conic_opacity_precomp = torch.Tensor([])
+        # if geom_rgb_precomp is None:
+        #     geom_rgb_precomp = torch.Tensor([])
+        # if point_list_precomp is None:
+        #     point_list_precomp = torch.Tensor([]).to(torch.int32)
+        # if ranges_precomp is None:
+        #     ranges_precomp = torch.Tensor([]).to(torch.int32)
+        # if tile_AMR_levels_last is None:
+        #     tile_AMR_levels_last = torch.Tensor([]).to(torch.int32)
+        # if tile_AMR_levels_current is None:
+        #     tile_AMR_levels_current = torch.Tensor([]).to(torch.int32)
         if geomBuffer_precomp is None:
             geomBuffer_precomp = torch.Tensor([]).to(torch.uint8)
         if binningBuffer_precomp is None:
@@ -345,17 +350,18 @@ class GaussianRasterizer(nn.Module):
             cov3D_precomp,  
                 foveaStep,
                 out_color_precomp,
-                radii_precomp,
-                means2D_precomp,
-                conic_opacity_precomp,
-                geom_rgb_precomp,
-                point_list_precomp,
-                ranges_precomp,
-                tile_AMR_levels_last,
-                tile_AMR_levels_current,
+                # radii_precomp,
+                # means2D_precomp,
+                # conic_opacity_precomp,
+                # geom_rgb_precomp,
+                # point_list_precomp,
+                # ranges_precomp,
+                # tile_AMR_levels_last,
+                # tile_AMR_levels_current,
                 geomBuffer_precomp,
                 binningBuffer_precomp,
                 imageBuffer_precomp,
+                interpolate_image,
             raster_settings, 
         )
 

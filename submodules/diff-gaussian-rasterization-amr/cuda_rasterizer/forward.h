@@ -62,7 +62,8 @@ namespace FORWARD
 		float* out_color,
 		const int foveaStep,
 		const float* out_color_precomp,
-		const uint32_t* tile_AMR_levels_last
+		const uint32_t* tile_AMR_levels_last,
+		const bool interpolate_image
 		);
 }
 

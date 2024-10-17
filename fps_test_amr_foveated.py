@@ -47,6 +47,7 @@ fps_avg0 = []
 fps_avg1 = []
 fps_avg2 = []
 fps_avg3 = []
+fps_avg4 = []
 for ratio in np.linspace(0.2,2.0,10):
 
     # restart cuda kernel and reload the model to avoid memory leak
@@ -85,6 +86,7 @@ for ratio in np.linspace(0.2,2.0,10):
     starter1, ender1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
     starter2, ender2 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
     starter3, ender3 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    starter4, ender4 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
 
     torch.cuda.synchronize()
     fpss = []
@@ -92,6 +94,7 @@ for ratio in np.linspace(0.2,2.0,10):
     fpss1 = []
     fpss2 = []
     fpss3 = []
+    fpss4 = []
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         time = 0
@@ -99,9 +102,10 @@ for ratio in np.linspace(0.2,2.0,10):
         time1 = 0
         time2 = 0
         time3 = 0
+        time4 = 0
         for i in range(5):
             result = render(view, gaussians, pipeline, background,starter = starter, ender= ender, 
-                               starters = [starter0, starter1, starter2, starter3], enders = [ender0, ender1, ender2, ender3]
+                               starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4]
             )
             rendering = result["render"]
             torch.cuda.synchronize()
@@ -110,18 +114,21 @@ for ratio in np.linspace(0.2,2.0,10):
             time1 += starter1.elapsed_time(ender1)
             time2 += starter2.elapsed_time(ender2)
             time3 += starter3.elapsed_time(ender3)
+            time4 += starter4.elapsed_time(ender4)
         # count fps every 5 frames
         fps = 5 / (time / 1000)
         fps0 = 5 / (time0 / 1000)
         fps1 = 5 / (time1 / 1000)
         fps2 = 5 / (time2 / 1000)
         fps3 = 5 / (time3 / 1000)
+        fps4 = 5 / (time4 / 1000)
         # print("FPS: ", fps)
         fpss.append(fps)
         fpss0.append(fps0)
         fpss1.append(fps1)
         fpss2.append(fps2)
         fpss3.append(fps3)
+        fpss4.append(fps4)
 
         
     avg_fps = sum(fpss) / len(fpss)
@@ -129,12 +136,14 @@ for ratio in np.linspace(0.2,2.0,10):
     avg_fps1 = sum(fpss1) / len(fpss1)
     avg_fps2 = sum(fpss2) / len(fpss2)
     avg_fps3 = sum(fpss3) / len(fpss3)
+    avg_fps4 = sum(fpss4) / len(fpss4)
 
     print(f"Average FPS: {avg_fps}")
     print(f"Average FPS of fov level 0: {avg_fps0}")
     print(f"Average FPS of fov level 1: {avg_fps1}")
     print(f"Average FPS of fov level 2: {avg_fps2}")
     print(f"Average FPS of fov level 3: {avg_fps3}")
+    print(f"Average FPS of fov level 4: {avg_fps4}")
 
     pix_horizon.append(int(pix_x*ratio))
     fps_avg.append(avg_fps)
@@ -142,16 +151,18 @@ for ratio in np.linspace(0.2,2.0,10):
     fps_avg1.append(avg_fps1)
     fps_avg2.append(avg_fps2)
     fps_avg3.append(avg_fps3)
+    fps_avg4.append(avg_fps4)
 
 
     
 # plot the fps vs horizontal pix curve for all steps
 import matplotlib.pyplot as plt
 plt.plot(pix_horizon, fps_avg, 'ko-',label = 'total')
-plt.plot(pix_horizon, fps_avg0, 'ro-',label = 'preprocess + level 1')
-plt.plot(pix_horizon, fps_avg1, 'go-',label = 'level 2')
-plt.plot(pix_horizon, fps_avg2, 'bo-',label = 'level 3')
-plt.plot(pix_horizon, fps_avg3, 'yo-',label = 'level 4')
+plt.plot(pix_horizon, fps_avg0, 'o-',label = 'preprocess', color = 'grey')
+plt.plot(pix_horizon, fps_avg1, 'ro-',label = 'level 1')
+plt.plot(pix_horizon, fps_avg2, 'go-',label = 'level 2')
+plt.plot(pix_horizon, fps_avg3, 'bo-',label = 'level 3')
+plt.plot(pix_horizon, fps_avg4, 'yo-',label = 'level 4')
 plt.xlabel('Horizontal Pixels')
 plt.ylabel('FPS')
 plt.title('model: 3DGS_AMR, machine: T4')
@@ -160,10 +171,11 @@ plt.savefig('fps_benchmark_amr_fovsteps.png')
 
 plt.figure()
 plt.plot(pix_horizon, fps_avg, 'ko-',label = 'total')
-plt.plot(pix_horizon, fps_avg0, 'ro-',label = 'preprocess + level 1')
-plt.plot(pix_horizon, fps_avg1, 'go-',label = 'level 2')
-plt.plot(pix_horizon, fps_avg2, 'bo-',label = 'level 3')
-plt.plot(pix_horizon, fps_avg3, 'yo-',label = 'level 4')
+plt.plot(pix_horizon, fps_avg0, 'o-',label = 'preprocess', color = 'grey')
+plt.plot(pix_horizon, fps_avg1, 'ro-',label = 'level 1')
+plt.plot(pix_horizon, fps_avg2, 'go-',label = 'level 2')
+plt.plot(pix_horizon, fps_avg3, 'bo-',label = 'level 3')
+plt.plot(pix_horizon, fps_avg4, 'yo-',label = 'level 4')
 plt.plot(np.linspace(800,4000,100), 1.5e8/np.linspace(800,4000,100)**2, 'k--',label = '$y\\propto x^{-2}$')
 plt.plot(np.linspace(800,4000,100), 7e4/np.linspace(800,4000,100), 'b--',label = '$y\\propto x^{-1}$')
 plt.xlabel('Horizontal Pixels')
@@ -176,10 +188,11 @@ plt.savefig('fps_benchmark_scale_amr_fovsteps.png')
 
 plt.figure()
 plt.plot(pix_horizon, fps_avg, 'ko-',label = 'total')
-plt.plot(pix_horizon, fps_avg0, 'ro-',label = 'preprocess + level 1')
-plt.plot(pix_horizon, fps_avg1, 'go-',label = 'level 2')
-plt.plot(pix_horizon, fps_avg2, 'bo-',label = 'level 3')
-plt.plot(pix_horizon, fps_avg3, 'yo-',label = 'level 4')
+plt.plot(pix_horizon, fps_avg0, 'o-',label = 'preprocess', color = 'grey')
+plt.plot(pix_horizon, fps_avg1, 'ro-',label = 'level 1')
+plt.plot(pix_horizon, fps_avg2, 'go-',label = 'level 2')
+plt.plot(pix_horizon, fps_avg3, 'bo-',label = 'level 3')
+plt.plot(pix_horizon, fps_avg4, 'yo-',label = 'level 4')
 plt.plot(np.linspace(800,4000,100), 1.8e8/np.linspace(800,4000,100)**2, 'k--',label = '$y\\propto x^{-2}$')
 plt.plot(np.linspace(800,4000,100), 7e4/np.linspace(800,4000,100), 'b--',label = '$y\\propto x^{-1}$')
 plt.semilogy(np.linspace(800,4000,100), 140*np.exp( - 0.75* np.linspace(800,4000,100)/1000), 'y--',label = '$\\log y \\propto C - x $')
@@ -197,18 +210,19 @@ for i in range(len(pix_horizon)):
     lapse1 = 1000 / fps_avg1[i]
     lapse2 = 1000 / fps_avg2[i]
     lapse3 = 1000 / fps_avg3[i]
-    lapse_times.append([lapse0, lapse1, lapse2, lapse3])
+    lapse4 = 1000 / fps_avg4[i]
+    lapse_times.append([lapse0, lapse1, lapse2, lapse3, lapse4])
 
 lapse_times = np.array(lapse_times)
 
 # Create stacked bar plot
 plt.figure(figsize=(8, 6))
 bar_width = 200
-colors = ['r', 'g', 'b', 'y']
-labels = ['Preprocess + Level 1', 'Level 2', 'Level 3', 'Level 4']
+colors = ['k', 'r', 'g', 'b', 'y']
+labels = ['Preprocess', 'Level 1', 'Level 2', 'Level 3', 'Level 4']
 
 bottom = np.zeros(len(pix_horizon))
-for i in range(4):
+for i in range(5):
     plt.bar(pix_horizon, lapse_times[:, i], bar_width, bottom=bottom, color=colors[i], label=labels[i])
     bottom += lapse_times[:, i]
 

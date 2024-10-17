@@ -22,7 +22,7 @@ camera_idx = 0
 tile_level = 5 # 2^tile_level is the number of pixels on a tile edge
 AMR_factor = 0.5
 AMR_MAX_LEVELS_count = 4
-AMR_level_percentiles = [0.1, 0.4, 0.9,1.0]
+AMR_level_percentiles = [0.25, 0.5, 0.9,1.0]
 
 
 # same args as render.py
@@ -40,7 +40,7 @@ mydataset = model.extract(args)
 
 
 
-pipeline.debug = True
+# pipeline.debug = True
 
 
 if pipeline.debug:

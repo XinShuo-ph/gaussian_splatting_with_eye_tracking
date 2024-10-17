@@ -61,9 +61,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     return std::make_tuple(means2D, conic_opacity, geom_rgb, point_list, ranges, tile_AMR_levels);
 }
 
-// one int for rendered, one tensor for out_color, one tensor for radii, 
-//  6 tensors for the intermediate quantities, and 3 tensors for buffers
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -85,17 +84,18 @@ RasterizeGaussiansCUDA(
 	const bool prefiltered,
 	const int foveaStep, // =-1 means no foveation, =0,1,2,3 corresponds to progressively higher quality
 	const torch::Tensor& out_color_precomp, // precomputed color (from last step)
-	const torch::Tensor& radii_precomp, // precomputed radii
-	const torch::Tensor& means2D_precomp, // precomputed means2D 
-	const torch::Tensor& conic_opacity_precomp, // precomputed conic_opacity
-	const torch::Tensor& geom_rgb_precomp, // precomputed geom_rgb
-	const torch::Tensor& point_list_precomp, // precomputed point_list
-	const torch::Tensor& ranges_precomp, // precomputed ranges
-	const torch::Tensor& tile_AMR_levels_last, // AMR levels of the last step
-	const torch::Tensor& tile_AMR_levels_current, // AMR levels of the current step
+	// const torch::Tensor& radii_precomp, // precomputed radii
+	// const torch::Tensor& means2D_precomp, // precomputed means2D 
+	// const torch::Tensor& conic_opacity_precomp, // precomputed conic_opacity
+	// const torch::Tensor& geom_rgb_precomp, // precomputed geom_rgb
+	// const torch::Tensor& point_list_precomp, // precomputed point_list
+	// const torch::Tensor& ranges_precomp, // precomputed ranges
+	// const torch::Tensor& tile_AMR_levels_last, // AMR levels of the last step
+	// const torch::Tensor& tile_AMR_levels_current, // AMR levels of the current step
 	const torch::Tensor& geomBuffer_precomp, // pass the buffer, this this can work, we do not need things above
 	const torch::Tensor& binningBuffer_precomp,
 	const torch::Tensor& imageBuffer_precomp,
+	const bool interpolate_image, // whether to interpolate the image or leave unrendered blank
 	const bool debug)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
@@ -159,19 +159,20 @@ RasterizeGaussiansCUDA(
 		prefiltered,
 		foveaStep,
 		out_color_precomp.contiguous().data<float>(),
-		radii_precomp.contiguous().data<int>(),
-		means2D_precomp.contiguous().data<float>(),
-		conic_opacity_precomp.contiguous().data<float>(),
-		geom_rgb_precomp.contiguous().data<float>(),
-		point_list_precomp.contiguous().data<int>(),
-		ranges_precomp.contiguous().data<int>(),
-		tile_AMR_levels_last.contiguous().data<int>(),
-		tile_AMR_levels_current.contiguous().data<int>(),
+		// radii_precomp.contiguous().data<int>(),
+		// means2D_precomp.contiguous().data<float>(),
+		// conic_opacity_precomp.contiguous().data<float>(),
+		// geom_rgb_precomp.contiguous().data<float>(),
+		// point_list_precomp.contiguous().data<int>(),
+		// ranges_precomp.contiguous().data<int>(),
+		// tile_AMR_levels_last.contiguous().data<int>(),
+		// tile_AMR_levels_current.contiguous().data<int>(),
 		reinterpret_cast<char*>(geomBuffer_precomp.contiguous().data_ptr()),
 		reinterpret_cast<char*>(binningBuffer_precomp.contiguous().data_ptr()),
 		reinterpret_cast<char*>(imageBuffer_precomp.contiguous().data_ptr()),
 		out_color.contiguous().data<float>(),
 		radii.contiguous().data<int>(),
+		interpolate_image,
 		debug);
 		if (debug) {
 			std::cout << "RasterizeGaussiansCUDA: forward done" << std::endl;
@@ -179,25 +180,25 @@ RasterizeGaussiansCUDA(
   }
 //   return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer);
     if (foveaStep > 0){ // if entered foveated rendering, use precomputed buffers
-		if (debug) {
-			std::cout << "RasterizeGaussiansCUDA: ParseBuffers" << std::endl;
-		}
-		auto [parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels] = ParseBuffers(geomBuffer_precomp, binningBuffer_precomp, imageBuffer_precomp, P, W, H);	
+		// if (debug) {
+		// 	std::cout << "RasterizeGaussiansCUDA: ParseBuffers" << std::endl;
+		// }
+		// auto [parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels] = ParseBuffers(geomBuffer_precomp, binningBuffer_precomp, imageBuffer_precomp, P, W, H);	
 		if (debug) {
 			std::cout << "RasterizeGaussiansCUDA: return" << std::endl;
 		}
-		return std::make_tuple(rendered, out_color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer_precomp, binningBuffer_precomp, imageBuffer_precomp);
+		return std::make_tuple(rendered, out_color, radii, geomBuffer_precomp, binningBuffer_precomp, imageBuffer_precomp);
 
 	}
 	// otherwise, same as standard 3DGS
-	if (debug) {
-		std::cout << "RasterizeGaussiansCUDA: ParseBuffers" << std::endl;
-	}
-	auto [parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels] = ParseBuffers(geomBuffer, binningBuffer, imgBuffer, P, W, H);
+	// if (debug) {
+	// 	std::cout << "RasterizeGaussiansCUDA: ParseBuffers" << std::endl;
+	// }
+	// auto [parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels] = ParseBuffers(geomBuffer, binningBuffer, imgBuffer, P, W, H);
 	if (debug) {
 		std::cout << "RasterizeGaussiansCUDA: return" << std::endl;
 	}
-	return std::make_tuple(rendered, out_color, radii, parsed_means2D, parsed_conic_opacity, parsed_geom_rgb, parsed_point_list, parsed_ranges, parsed_tile_AMR_levels, geomBuffer, binningBuffer, imgBuffer);
+	return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
