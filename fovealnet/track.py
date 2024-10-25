@@ -11,8 +11,9 @@ from tqdm import tqdm
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference for gaze estimation model.")
     parser.add_argument("--model_path", default="results/model_minmax_0.8.pt", type=str, help="Path to the trained model")
-    parser.add_argument("--image_folder", default="/home/ubuntu/openeds/train/sequences/7400/", type=str,help="Folder containing input images")
+    parser.add_argument("--image_folder", default="/home/ubuntu/openeds/train/sequences/7400/", type=str, help="Folder containing input images")
     parser.add_argument("--output_file", type=str, default="predictions.txt", help="Output file for predictions")
+    parser.add_argument("--layer_timer", action="store_true", help="Enable layer-wise timing")
     return parser.parse_args()
 
 def load_image(image_path):
@@ -33,11 +34,19 @@ def main():
     model.load_state_dict(torch.load(args.model_path, map_location=device))
     model.eval()
 
+    # Create CUDA events for timing if layer_timer is enabled
+    if args.layer_timer:
+        num_events = len(model.transformer_layers) + 2  # +1 for patch embedding, +1 for final layers
+        starters = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
+        enders = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
+    else:
+        starters, enders = None, None
+
     # Process images and make predictions
     predictions = []
     total_time = 0
     num_images = 0
-    
+    layer_times = [0] * (len(model.transformer_layers) + 2) if args.layer_timer else None
     
     for image_name in tqdm(os.listdir(args.image_folder), desc="Processing images"):
         if image_name.lower().endswith(('.png', '.jpg', '.jpeg')):
@@ -48,17 +57,34 @@ def main():
                 start_time = torch.cuda.Event(enable_timing=True)
                 end_time = torch.cuda.Event(enable_timing=True)
                 start_time.record()
-                output = model.forward(image)
+                
+                if args.layer_timer:
+                    output = model.forward_timer(image, starters, enders)
+                else:
+                    output = model(image)
+                
                 end_time.record()
                 torch.cuda.synchronize()
                 elapsed_time = start_time.elapsed_time(end_time)
                 total_time += elapsed_time
                 num_images += 1
+
+                if args.layer_timer:
+                    for i in range(len(layer_times)):
+                        layer_times[i] += starters[i].elapsed_time(enders[i])
     
             gaze_prediction = output.cpu().numpy()[0]
             predictions.append((image_name, gaze_prediction))
+
     average_time = total_time / num_images
     print(f"Average inference time: {average_time:.2f} ms")
+
+    if args.layer_timer:
+        print("\nLayer-wise timing:")
+        print(f"Patch embedding time: {layer_times[0]/num_images:.2f} ms")
+        for i, time in enumerate(layer_times[1:-1], 1):
+            print(f"Transformer block {i} time: {time/num_images:.2f} ms")
+        print(f"Final layers time: {layer_times[-1]/num_images:.2f} ms")
 
     # Write predictions to output file
     with open(args.output_file, 'w') as f:

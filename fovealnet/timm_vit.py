@@ -138,6 +138,66 @@ class VisionTransformer(nn.Module):
         gaze_dir = self.fc4(gaze_dir)
 
         return gaze_dir
+    
+    def forward_timer(self, x, starters=None, enders=None):
+        self.register_hooks()
+
+        if starters is None or enders is None:
+            raise ValueError("starters and enders must be provided for timing")
+
+        starters[0].record()  # Start timing for patch embedding
+        x = self.backbone.patch_embed(x)
+        if self.backbone.pos_embed.shape[1] == 197 and x.shape[1] == 196:
+            pos_embed = self.backbone.pos_embed[:, 1:, :] 
+        else:
+            pos_embed = self.backbone.pos_embed
+        x = self.backbone.pos_drop(x + pos_embed)
+        enders[0].record()  # End timing for patch embedding
+
+        for i, block in enumerate(self.transformer_layers):
+            starters[i+1].record()  # Start timing for this transformer block
+            x = block(x)
+            if i % 2 == 1 and self.score_method == "attention":
+                attn_scores = self.attention_scores.mean(dim=-1)
+                topk_indices = attn_scores.topk(
+                    int(self.top_k * attn_scores.size(1)), dim=1, largest=True
+                ).indices
+                if topk_indices.max() >= x.size(1):
+                    raise ValueError("topk_indices contains out of bounds index")
+
+                bs = x.size(0)
+                batch_indices = (
+                    torch.arange(bs)
+                    .unsqueeze(-1)
+                    .expand(-1, topk_indices.size(1))
+                    .to(x.device)
+                )
+
+                informative_tokens = x[batch_indices, topk_indices]
+
+                non_informative_indices = torch.ones_like(attn_scores, dtype=bool)
+                non_informative_indices[batch_indices, topk_indices] = False
+                non_informative_tokens = x[non_informative_indices].view(
+                    bs, -1, x.size(-1)
+                )
+                x = informative_tokens
+                
+                features = x.mean(dim=1)
+                gaze_dir = F.relu(self.fc1(features))
+                gaze_dir = F.relu(self.fc2(gaze_dir))
+                gaze_dir = F.relu(self.fc3(gaze_dir))
+                gaze_dir = self.fc4(gaze_dir)
+            enders[i+1].record()  # End timing for this transformer block
+
+        starters[len(self.transformer_layers)+1].record()  # Start timing for final layers
+        features = x.mean(dim=1)
+        gaze_dir = F.relu(self.fc1(features))
+        gaze_dir = F.relu(self.fc2(gaze_dir))
+        gaze_dir = F.relu(self.fc3(gaze_dir))
+        gaze_dir = self.fc4(gaze_dir)
+        enders[len(self.transformer_layers)+1].record()  # End timing for final layers
+
+        return gaze_dir
         
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
