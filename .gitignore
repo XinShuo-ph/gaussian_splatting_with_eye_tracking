@@ -13,3 +13,6 @@ tandt_db.zip
 *.png
 fpslog.txt
 *.dump
+
+fovealnet/logs
+fovealnet/results

@@ -11,12 +11,31 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 
 
+# def convert_gaze(vector_str) -> np.ndarray:
+#     try:
+#         parts = vector_str.split("_")
+#         if len(parts) != 3:
+#             raise ValueError(f"Invalid vector length: {len(parts)}")
+#         x, y, z = map(float, parts)
+#         pitch = np.arcsin(-y)
+#         yaw = np.arctan2(x, z)
+#         return np.array([pitch, yaw]).astype(np.float32)
+#     except Exception as e:
+#         raise ValueError(f"Error converting gaze vector '{vector_str}': {e}")
+
+# the function above assumes the file name encodes the gaze vector separated by _
+# however, in the dataset the gaze vector is saved in train.csv as strings
+import numpy as np
+
 def convert_gaze(vector_str) -> np.ndarray:
     try:
-        parts = vector_str.split("_")
-        if len(parts) != 3:
-            raise ValueError(f"Invalid vector length: {len(parts)}")
-        x, y, z = map(float, parts)
+        # Remove brackets and split by spaces
+        vector = np.array([float(x) for x in vector_str.strip('[]').split()])
+        
+        if vector.shape[0] != 3:
+            raise ValueError(f"Invalid vector length: {vector.shape[0]}")
+        
+        x, y, z = vector
         pitch = np.arcsin(-y)
         yaw = np.arctan2(x, z)
         return np.array([pitch, yaw]).astype(np.float32)
@@ -31,22 +50,49 @@ class EdsDataset(Dataset):
         self.image_folder = image_folder
         self.info_file = pd.read_csv(info_file)
 
+        # if transform_left is None or transform_right is None:
+        #     transform_left = transforms.Compose(
+        #         [
+        #             # transforms.Resize((224, 224)),
+        #             transforms.ToTensor(),
+        #         ]
+        #     )
+
+        #     transform_right = transforms.Compose(
+        #         [
+        #             # transforms.Resize((224, 224)),
+        #             transforms.ColorJitter(brightness=0.5),
+        #             transforms.RandomHorizontalFlip(p=1.0),
+        #             transforms.ToTensor(),
+        #         ]
+        #     )
+
+        # need to resize the image
+        # other operations are copied from the function AllEdsDataset below, what do the operations mean?
         if transform_left is None or transform_right is None:
             transform_left = transforms.Compose(
                 [
-                    # transforms.Resize((224, 224)),
+                    transforms.Resize((224, 224)),
+                    transforms.RandomResizedCrop((224, 224), scale=(0.8, 1.0)),
+                    transforms.ColorJitter(brightness=0.5),
+                    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
                     transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.5], std=[0.225]),
                 ]
             )
 
             transform_right = transforms.Compose(
                 [
-                    # transforms.Resize((224, 224)),
+                    transforms.Resize((224, 224)),
+                    transforms.RandomResizedCrop((224, 224), scale=(0.8, 1.0)),
                     transforms.ColorJitter(brightness=0.5),
                     transforms.RandomHorizontalFlip(p=1.0),
+                    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
                     transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.5], std=[0.225]),
                 ]
             )
+
         self.transform_left = transform_left
         self.transform_right = transform_right
 
@@ -55,7 +101,7 @@ class EdsDataset(Dataset):
 
     def __getitem__(self, idx):
         img_path = os.path.join(
-            self.image_folder, "sequences", self.info_file.iloc[idx]["image"] + ".png"
+            self.image_folder, "sequences", self.info_file.iloc[idx]["image"].replace("\\", "/")  + ".png"
         )
         image = Image.open(img_path).convert("L")  # Convert to grayscale
         eye_type = self.info_file.iloc[idx]["eye_type"]
@@ -70,7 +116,7 @@ class EdsDataset(Dataset):
 
         rec_type = self.info_file.iloc[idx]["rec_type"]
 
-        return image, gaze_gt_vec, eye_type, rec_type
+        return image, rec_type, eye_type, torch.tensor(gaze_gt_vec)
 
 class AllEdsDataset(Dataset):
 

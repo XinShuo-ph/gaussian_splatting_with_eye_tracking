@@ -158,7 +158,7 @@ def set_seed(seed):
 def parse_args():
     parser = argparse.ArgumentParser(description="Train a gaze estimation model.")
     parser.add_argument(
-        "--batch_size", type=int, default=800, help="Batch size for training"
+        "--batch_size", type=int, default=50, help="Batch size for training"
     )
     parser.add_argument("--lr", type=float, default=0.00005, help="learning rate")
     parser.add_argument(
@@ -257,8 +257,11 @@ def main():
     # val_dataset = AllEdsDataset(image_folder=val_folders)
 
 
-    train_dataset = AllEdsDataset(image_folder=train_folders)
-    val_dataset = AllEdsDataset(image_folder=val_folders)
+    # train_dataset = AllEdsDataset(image_folder=train_folders)
+    # val_dataset = AllEdsDataset(image_folder=val_folders)
+
+    train_dataset = EdsDataset(image_folder=args.train_folder, info_file=args.train_info)
+    val_dataset = EdsDataset(image_folder=args.val_folder, info_file=args.val_info)
 
     # final_train_dataset = AllEdsDataset(image_folder=args.train_folder)
     # final_train_data = train_dataset.data + val_dataset.data
