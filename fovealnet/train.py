@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from data.utils import EdsDataset, train_model, AllEdsDataset
+from utils import EdsDataset, train_model, AllEdsDataset
 from torch.optim.lr_scheduler import StepLR
 from sklearn.model_selection import train_test_split
 # from vit_model import VisionTransformer

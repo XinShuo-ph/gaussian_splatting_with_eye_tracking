@@ -42,6 +42,7 @@ class VisionTransformer(nn.Module):
 
         self.attention_scores = None
         self.backbone.blocks = None
+        self.register_hooks()
 
     def hook_fn(self, module, input, output):
         self.attention_scores = module.attn_drop(output)
@@ -75,7 +76,7 @@ class VisionTransformer(nn.Module):
                 self.attention_weights[:, head, :, :] = 0.0
 
     def forward(self, x):
-        self.register_hooks()
+        # self.register_hooks()
 
         x = self.backbone.patch_embed(x)
         if self.backbone.pos_embed.shape[1] == 197 and x.shape[1] == 196:
@@ -140,7 +141,7 @@ class VisionTransformer(nn.Module):
         return gaze_dir
     
     def forward_timer(self, x, starters=None, enders=None):
-        self.register_hooks()
+        # self.register_hooks()
 
         if starters is None or enders is None:
             raise ValueError("starters and enders must be provided for timing")
