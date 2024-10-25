@@ -459,6 +459,7 @@ renderCUDA(
 			{
 				int coll_id = point_list[range.x + progress];
 				collected_id[block.thread_rank()] = coll_id;
+				// skip those above threhold
 				collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 				collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			}
