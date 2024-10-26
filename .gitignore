@@ -18,3 +18,4 @@ fovealnet/logs
 fovealnet/results
 fovealnet/predictions.txt
 predictions.txt
+predictions_*.txt
