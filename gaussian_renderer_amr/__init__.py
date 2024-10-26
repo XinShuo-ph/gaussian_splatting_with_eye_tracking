@@ -23,7 +23,7 @@ from utils.sh_utils import eval_sh
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, 
            starter=None,ender=None, starters=None, enders=None,
-           interpolate_image = False):
+           interpolate_image = False, test_no_render_laststep=False):
     """
     Render the scene. 
     
@@ -549,7 +549,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     #     interpolate_image = interpolate_image
     # )
     
-    
+    if test_no_render_laststep:
+        foveaStep = 3
+
     rendered_image4, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
         means3D,
         means2D,

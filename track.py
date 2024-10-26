@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference for gaze estimation model.")
-    parser.add_argument("--foveal_model_path", default="/home/ubuntu/gaussian-splatting/fovealnet/results/model_minmax_0.8.pt", type=str, help="Path to the trained model")
+    parser.add_argument("--foveal_model_path", default="/home/ubuntu/gaussian-splatting/fovealnet/results_20241022/model_minmax_0.8.pt", type=str, help="Path to the trained model")
     parser.add_argument("--eye_image_folder", default="/home/ubuntu/openeds/test/sequences/0000/", type=str, help="Folder containing input images")
     parser.add_argument("--eye_image_sequence_folder", default="/home/ubuntu/openeds/test/sequences/", type=str, help="Folder containing input image sequences")
     parser.add_argument("--eye_image_sequence_id_start", default=None, type=int, help="Start of the image sequence ID range")

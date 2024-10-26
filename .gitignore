@@ -15,7 +15,7 @@ fpslog.txt
 *.dump
 
 fovealnet/logs
-fovealnet/results
+fovealnet/results*
 fovealnet/predictions.txt
 predictions.txt
 predictions_*.txt

@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference for gaze estimation model.")
-    parser.add_argument("--model_path", default="results/model_minmax_0.8.pt", type=str, help="Path to the trained model")
+    parser.add_argument("--model_path", default="results_20241022/model_minmax_0.8.pt", type=str, help="Path to the trained model")
     parser.add_argument("--image_folder", default="/home/ubuntu/openeds/train/sequences/7400/", type=str, help="Folder containing input images")
     parser.add_argument("--output_file", type=str, default="predictions.txt", help="Output file for predictions")
     parser.add_argument("--layer_timer", action="store_true", help="Enable layer-wise timing")

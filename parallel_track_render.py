@@ -33,7 +33,7 @@ model = ModelParams(parser, sentinel=True)
 pipeline = PipelineParams(parser)
 
 # Add arguments from track.py
-parser.add_argument("--foveal_model_path", default="/home/ubuntu/gaussian-splatting/fovealnet/results/model_minmax_0.8.pt", type=str)
+parser.add_argument("--foveal_model_path", default="/home/ubuntu/gaussian-splatting/fovealnet/results_20241022/model_minmax_0.8.pt", type=str)
 parser.add_argument("--eye_image_folder", default="/home/ubuntu/openeds/test/sequences/0000/", type=str)
 parser.add_argument("--eye_image_sequence_folder", default="/home/ubuntu/openeds/test/sequences/", type=str)
 parser.add_argument("--eye_image_sequence_id_start", default=None, type=int)
@@ -42,9 +42,11 @@ parser.add_argument("--foveal_output_file", type=str, default="predictions.txt")
 parser.add_argument("--foveal_layer_timer", action="store_true")
 
 parser.add_argument("--iteration", default=-1, type=int)
+parser.add_argument("--show_fps", action="store_true")
 parser.add_argument("--skip_train", action="store_true")
 parser.add_argument("--skip_test", action="store_true")
 parser.add_argument("--quiet", action="store_true")
+parser.add_argument("--test_no_render_laststep", action="store_true") # test the time of purely passing the data in foveastep 4
 args = get_combined_args(parser)
 
 
@@ -58,6 +60,12 @@ win = MPI.Win.Create(sync_gaze_prediction, comm=comm)
 
 
 if rank == 0:  # Gaussian Splatting process
+
+    device = torch.device("cuda")
+    props = torch.cuda.get_device_properties(device)
+    num_sms = props.multi_processor_count
+    print(f"Gaussian Splatting process is using {num_sms} stream multiprocessors.")
+
     print("Rendering " + args.model_path)
     safe_state(args.quiet)
     mydataset = model.extract(args)
@@ -89,12 +97,22 @@ if rank == 0:  # Gaussian Splatting process
     starter4, ender4 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
 
     torch.cuda.synchronize()
-    fpss = []
-    fpss0 = []
-    fpss1 = []
-    fpss2 = []
-    fpss3 = []
-    fpss4 = []
+
+    # choose to record time or fps
+    if args.show_fps:
+        fpss = []
+        fpss0 = []
+        fpss1 = []
+        fpss2 = []
+        fpss3 = []
+        fpss4 = []
+    else:
+        times = []
+        times0 = []
+        times1 = []
+        times2 = []
+        times3 = []
+        times4 = []
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         # comm.Recv(gaze_prediction, source=1, tag=idx)
@@ -118,7 +136,8 @@ if rank == 0:  # Gaussian Splatting process
         time4 = 0
         for i in range(5):
             rendering = render(view, gaussians, pipeline, background,starter = starter, ender= ender, 
-                               starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4]
+                               starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
+                               test_no_render_laststep=args.test_no_render_laststep
                                )["render"]
             torch.cuda.synchronize()
             time += starter.elapsed_time(ender)
@@ -127,42 +146,67 @@ if rank == 0:  # Gaussian Splatting process
             time2 += starter2.elapsed_time(ender2)
             time3 += starter3.elapsed_time(ender3)
             time4 += starter4.elapsed_time(ender4)
-        # count fps every 5 frames
-        fps = 5 / (time / 1000)
-        fps0 = 5 / (time0 / 1000)
-        fps1 = 5 / (time1 / 1000)
-        fps2 = 5 / (time2 / 1000)
-        fps3 = 5 / (time3 / 1000)
-        fps4 = 5 / (time4 / 1000)
-        # print("FPS: ", fps)
-        fpss.append(fps)
-        fpss0.append(fps0)
-        fpss1.append(fps1)
-        fpss2.append(fps2)
-        fpss3.append(fps3)
-        fpss4.append(fps4)
+        if args.show_fps:
+            # count fps every 5 frames
+            fps = 5 / (time / 1000)
+            fps0 = 5 / (time0 / 1000)
+            fps1 = 5 / (time1 / 1000)
+            fps2 = 5 / (time2 / 1000)
+            fps3 = 5 / (time3 / 1000)
+            fps4 = 5 / (time4 / 1000)
+            # print("FPS: ", fps)
+            fpss.append(fps)
+            fpss0.append(fps0)
+            fpss1.append(fps1)
+            fpss2.append(fps2)
+            fpss3.append(fps3)
+            fpss4.append(fps4)
+        else:
+            times.append(time/5)
+            times0.append(time0/5)
+            times1.append(time1/5)
+            times2.append(time2/5)
+            times3.append(time3/5)
+            times4.append(time4/5)
 
-        
-    avg_fps = sum(fpss) / len(fpss)
-    avg_fps0 = sum(fpss0) / len(fpss0)
-    avg_fps1 = sum(fpss1) / len(fpss1)
-    avg_fps2 = sum(fpss2) / len(fpss2)
-    avg_fps3 = sum(fpss3) / len(fpss3)
-    avg_fps4 = sum(fpss4) / len(fpss4)
+    if args.show_fps:      
+        avg_fps = sum(fpss) / len(fpss)
+        avg_fps0 = sum(fpss0) / len(fpss0)
+        avg_fps1 = sum(fpss1) / len(fpss1)
+        avg_fps2 = sum(fpss2) / len(fpss2)
+        avg_fps3 = sum(fpss3) / len(fpss3)
+        avg_fps4 = sum(fpss4) / len(fpss4)
 
-    print(f"Average FPS: {avg_fps}")
-    print(f"Average FPS of fov level 0: {avg_fps0}")
-    print(f"Average FPS of fov level 1: {avg_fps1}")
-    print(f"Average FPS of fov level 2: {avg_fps2}")
-    print(f"Average FPS of fov level 3: {avg_fps3}")
-    print(f"Average FPS of fov level 4: {avg_fps4}")
-    # test = 1/(1/avg_fps0 + 1/avg_fps1 + 1/avg_fps2 + 1/avg_fps3 + 1/avg_fps4)
+        print(f"Average FPS: {avg_fps}")
+        print(f"Average FPS of fov level 0: {avg_fps0}")
+        print(f"Average FPS of fov level 1: {avg_fps1}")
+        print(f"Average FPS of fov level 2: {avg_fps2}")
+        print(f"Average FPS of fov level 3: {avg_fps3}")
+        print(f"Average FPS of fov level 4: {avg_fps4}")
+    else:
+        avg_time = sum(times) / len(times)
+        avg_time0 = sum(times0) / len(times0)
+        avg_time1 = sum(times1) / len(times1)
+        avg_time2 = sum(times2) / len(times2)
+        avg_time3 = sum(times3) / len(times3)
+        avg_time4 = sum(times4) / len(times4)
+
+        print(f"Average time: {avg_time} ms")
+        print(f"Average time of fov level 0: {avg_time0} ms")
+        print(f"Average time of fov level 1: {avg_time1} ms")
+        print(f"Average time of fov level 2: {avg_time2} ms")
+        print(f"Average time of fov level 3: {avg_time3} ms")
+        print(f"Average time of fov level 4: {avg_time4} ms")
 
 
 
 else:  # FovealNet process
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    props = torch.cuda.get_device_properties(device)
+    num_sms = props.multi_processor_count
+    print(f"FovealNet process is using {num_sms} stream multiprocessors.")
+
 
     model = VisionTransformer(num_layers=6, top_k=1.0).to(device)
     model.load_state_dict(torch.load(args.foveal_model_path, map_location=device))

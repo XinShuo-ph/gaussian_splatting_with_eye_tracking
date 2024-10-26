@@ -29,6 +29,7 @@ parser.add_argument("--iteration", default=-1, type=int)
 parser.add_argument("--skip_train", action="store_true")
 parser.add_argument("--skip_test", action="store_true")
 parser.add_argument("--quiet", action="store_true")
+parser.add_argument("--test_no_render_laststep", action="store_true") # test the time of purely passing the data in foveastep 4
 args = get_combined_args(parser)
 print("Rendering " + args.model_path)
 safe_state(args.quiet)
@@ -80,7 +81,8 @@ for ratio in [1]:
         time4 = 0
         for i in range(5):
             rendering = render(view, gaussians, pipeline, background,starter = starter, ender= ender, 
-                               starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4]
+                               starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
+                               test_no_render_laststep = args.test_no_render_laststep
                                )["render"]
             torch.cuda.synchronize()
             time += starter.elapsed_time(ender)
