@@ -33,7 +33,7 @@ model = ModelParams(parser, sentinel=True)
 pipeline = PipelineParams(parser)
 
 # Add arguments from track.py
-parser.add_argument("--foveal_model_path", default="/home/ubuntu/gaussian-splatting/fovealnet/results_20241022/model_minmax_0.8.pt", type=str)
+parser.add_argument("--foveal_model_path", default="/home/ubuntu/gaussian_splatting_with_eye_tracking/fovealnet/results_20241022/model_minmax_0.8.pt", type=str)
 parser.add_argument("--eye_image_folder", default="/home/ubuntu/openeds/test/sequences/0000/", type=str)
 parser.add_argument("--eye_image_sequence_folder", default="/home/ubuntu/openeds/test/sequences/", type=str)
 parser.add_argument("--eye_image_sequence_id_start", default=None, type=int)
@@ -53,10 +53,22 @@ args = get_combined_args(parser)
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+# Create shared memory window for gaze predictions
+# if rank == 0:
+#     # Rank 0 creates the shared memory
+#     sync_gaze_prediction = np.zeros(2, dtype=np.float32)
+# else:
+#     # Other ranks don't need local buffer
+#     sync_gaze_prediction = np.zeros(2, dtype=np.float32)
 
-
-sync_gaze_prediction = np.empty(2, dtype=np.float32)
+sync_gaze_prediction = np.zeros(2, dtype=np.float32)
 win = MPI.Win.Create(sync_gaze_prediction, comm=comm)
+
+gaze_predictions_buffer = np.zeros((150, 2), dtype=np.float32) # at most 150 gaze for each head position
+fovealnet_level_buffer = np.zeros(150, dtype=np.int32)
+
+win1 = MPI.Win.Create(gaze_predictions_buffer, comm=comm)
+win2 = MPI.Win.Create(fovealnet_level_buffer, comm=comm)
 
 
 if rank == 0:  # Gaussian Splatting process
@@ -115,17 +127,23 @@ if rank == 0:  # Gaussian Splatting process
         times4 = []
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        # comm.Recv(gaze_prediction, source=1, tag=idx)
+        
+        # Wait for FovealNet process to be ready
+        comm.Barrier()
         
         # Use gaze prediction to adjust rendering if needed
         # For now, we'll just print it
         # print(f"Received gaze prediction: Pitch={gaze_prediction[0]:.4f}, Yaw={gaze_prediction[1]:.4f}")
 
         # instead of sending and receiving, use windows to share gaze prediction
-        # win.Lock(1)  # Lock the window for process 1 (FovealNet)
-        # win.Get(sync_gaze_prediction, 1)  # Get data from process 1
+        # Read from shared memory
+        # win.Lock(1)  # Lock for reading
+        # print(f"Received gaze prediction: {sync_gaze_prediction}")
+        # local_gaze = np.array(sync_gaze_prediction)  # Make a local copy
+        # print(f"Received gaze prediction: {local_gaze}")
         # win.Unlock(1)
-        # print(f"Received gaze prediction: Pitch={sync_gaze_prediction[0]}, Yaw={sync_gaze_prediction[1]}")
+
+
 
 
         time = 0
@@ -139,6 +157,16 @@ if rank == 0:  # Gaussian Splatting process
                                starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
                                test_no_render_laststep=args.test_no_render_laststep
                                )["render"]
+            
+            win1.Lock(1)
+            local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
+            print(f"Received gaze prediction: {local_gaze_buffer}")
+            win1.Unlock(1)
+
+            win2.Lock(1)
+            local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
+            print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
+            win2.Unlock(1)
             torch.cuda.synchronize()
             time += starter.elapsed_time(ender)
             time0 += starter0.elapsed_time(ender0)
@@ -215,7 +243,9 @@ else:  # FovealNet process
     if args.eye_image_sequence_id_start is not None and args.eye_image_sequence_id_end is not None:
         
 
-        for seq_id in range(args.eye_image_sequence_id_start, args.eye_image_sequence_id_end + 1):
+        for seq_id in range(args.eye_image_sequence_id_start, args.eye_image_sequence_id_end ):
+            # Wait for Gaussian Splatting process to be ready
+            comm.Barrier()
             torch.cuda.empty_cache()
             
             # Create CUDA events for timing if foveal_layer_timer is enabled
@@ -236,12 +266,17 @@ else:  # FovealNet process
             num_images = 0
             layer_times = [0] * (len(model.transformer_layers) + 2) if args.foveal_layer_timer else None
 
+            local_predictions_buffer = np.zeros((150, 2), dtype=np.float32) 
+            local_fovealnet_level_buffer = np.zeros(150, dtype=np.int32)
+
             # for image_name in tqdm(os.listdir(sequence_folder), desc=f"Processing sequence {seq_id}"):
             # Remove tqdm and process images without progress bar
+            img_idx = -1
             for image_name in os.listdir(sequence_folder):
                 if image_name.lower().endswith(('.png', '.jpg', '.jpeg')):
                     image_path = os.path.join(sequence_folder, image_name)
                     image = load_image(image_path).to(device)
+                    img_idx += 1
 
                     with torch.no_grad():
                         start_time = torch.cuda.Event(enable_timing=True)
@@ -263,16 +298,28 @@ else:  # FovealNet process
                             for i in range(len(layer_times)):
                                 layer_times[i] += starters[i].elapsed_time(enders[i])
             
-                    sync_gaze_prediction = output.cpu().numpy()[0]
+                    prediction = output.cpu().numpy()[0]
+                    local_predictions_buffer[img_idx] = prediction  
+                    local_fovealnet_level_buffer[img_idx] = 4
                     # # Send gaze prediction to Gaussian Splatting process
                     # comm.Send(gaze_prediction, dest=0)
 
                     # # Update the shared gaze prediction
-                    # win.Lock(0)  # Lock the window for process 0 (Gaussian Splatting)
-                    # win.Put(sync_gaze_prediction, 0)  # Put data to process 0
+                    # win.Lock(0)  # Lock for writing
+                    # win.Put(prediction, 0)
+                    # print(f"Write prediction to shared memory: {prediction}")
                     # win.Unlock(0)
 
-                    predictions.append((image_name, sync_gaze_prediction))
+                    win1.Lock(0)
+                    win1.Put(local_predictions_buffer, 0)
+                    win1.Unlock(0)
+
+                    win2.Lock(0)
+                    win2.Put(local_fovealnet_level_buffer, 0)
+                    win2.Unlock(0)
+            
+
+                    predictions.append((image_name, prediction))
 
             average_time = total_time / num_images
             print(f"Average inference time for sequence {seq_id}: {average_time:.2f} ms")
@@ -328,17 +375,21 @@ else:  # FovealNet process
                         for i in range(len(layer_times)):
                             layer_times[i] += starters[i].elapsed_time(enders[i])
         
-                sync_gaze_prediction = output.cpu().numpy()[0]
+
+                prediction = output.cpu().numpy()[0]
                 # # Send gaze prediction to Gaussian Splatting process
                 # comm.Send(gaze_prediction, dest=0)
 
-                # Update the shared gaze prediction
-                # win.Lock(0)  # Lock the window for process 0 (Gaussian Splatting)
-                # win.Put(sync_gaze_prediction, 0)  # Put data to process 0
-                # win.Unlock(0)
+                # # Update the shared gaze prediction
+                win.Lock(0)  # Lock for writing
+                # sync_gaze_prediction[:] = prediction  # Update shared memory
+                win.Put(prediction, 0)
+                # print(f"Write prediction to shared memory: {prediction}")
+                win.Unlock(0)
 
 
-                predictions.append((image_name, sync_gaze_prediction))
+
+                predictions.append((image_name, prediction))
 
         average_time = total_time / num_images
         print(f"Average inference time: {average_time:.2f} ms")
@@ -357,3 +408,6 @@ else:  # FovealNet process
 
         print(f"Predictions saved to {args.foveal_output_file}")
 
+
+# Clean up
+win.Free()
