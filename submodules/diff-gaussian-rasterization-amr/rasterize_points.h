@@ -37,6 +37,9 @@ RasterizeGaussiansCUDA(
 	const torch::Tensor& campos,
 	const bool prefiltered,
 	const int foveaStep, // =-1 means no foveation, =0,1,2,3 corresponds to progressively higher quality
+	const float gaze_x, // gaze direction x
+	const float gaze_y, // gaze direction y
+	const float gaze_r2, const float gaze_r3, const float gaze_r4, // radii of the foveal level 2,3,4
 	const torch::Tensor& out_color_precomp, // precomputed color (from last step)
 	// const torch::Tensor& radii_precomp, // precomputed radii
 	// const torch::Tensor& means2D_precomp, // precomputed means2D 

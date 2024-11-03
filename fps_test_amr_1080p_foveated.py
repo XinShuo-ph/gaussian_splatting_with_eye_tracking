@@ -29,6 +29,11 @@ parser.add_argument("--iteration", default=-1, type=int)
 parser.add_argument("--skip_train", action="store_true")
 parser.add_argument("--skip_test", action="store_true")
 parser.add_argument("--quiet", action="store_true")
+parser.add_argument("--gaze_x", default=0, type=float)
+parser.add_argument("--gaze_y", default=0, type=float)
+parser.add_argument("--gaze_r2", default=1e4, type=float)
+parser.add_argument("--gaze_r3", default=1e4, type=float)
+parser.add_argument("--gaze_r4", default=1e4, type=float)
 parser.add_argument("--test_no_render_laststep", action="store_true") # test the time of purely passing the data in foveastep 4
 args = get_combined_args(parser)
 print("Rendering " + args.model_path)
@@ -80,7 +85,9 @@ for ratio in [1]:
         time3 = 0
         time4 = 0
         for i in range(5):
-            rendering = render(view, gaussians, pipeline, background,starter = starter, ender= ender, 
+            rendering = render(view, gaussians, pipeline, background,
+                               gaze_x=args.gaze_x, gaze_y=args.gaze_y, gaze_r2=args.gaze_r2, gaze_r3=args.gaze_r3, gaze_r4=args.gaze_r4,
+                               starter = starter, ender= ender, 
                                starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
                                test_no_render_laststep = args.test_no_render_laststep
                                )["render"]

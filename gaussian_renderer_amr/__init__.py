@@ -22,6 +22,9 @@ from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, 
+                gaze_x = 0,  # gaze direction x
+                gaze_y = 0,  # gaze direction y
+                gaze_r2 = 1e4 , gaze_r3=1e4, gaze_r4=1e4,  # radii of the foveal level 2,3,4
            starter=None,ender=None, starters=None, enders=None,
            interpolate_image = False, test_no_render_laststep=False):
     """
@@ -95,15 +98,15 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
     
-    # for now manually set the centers of the 3 fovea steps to image center
-    foveaCenters = torch.tensor([[viewpoint_camera.image_width/2, viewpoint_camera.image_height/2], 
-                                  [viewpoint_camera.image_width/2, viewpoint_camera.image_height/2],
-                                  [viewpoint_camera.image_width/2, viewpoint_camera.image_height/2],
-                                  [viewpoint_camera.image_width/2, viewpoint_camera.image_height/2]], device='cuda')
-    foveaRadii = torch.tensor([viewpoint_camera.image_width/2, 
-                                 viewpoint_camera.image_width/4, 
-                                 viewpoint_camera.image_width/8, 
-                                 viewpoint_camera.image_width/16], device='cuda')
+    # # for now manually set the centers of the 3 fovea steps to image center
+    # foveaCenters = torch.tensor([[viewpoint_camera.image_width/2, viewpoint_camera.image_height/2], 
+    #                               [viewpoint_camera.image_width/2, viewpoint_camera.image_height/2],
+    #                               [viewpoint_camera.image_width/2, viewpoint_camera.image_height/2],
+    #                               [viewpoint_camera.image_width/2, viewpoint_camera.image_height/2]], device='cuda')
+    # foveaRadii = torch.tensor([viewpoint_camera.image_width/2, 
+    #                              viewpoint_camera.image_width/4, 
+    #                              viewpoint_camera.image_width/8, 
+    #                              viewpoint_camera.image_width/16], device='cuda')
 
     # I record times here because the color and cov are not computed in python when testing fps
     # loading gaussian model parameters in python took similar time as rendering 
@@ -190,6 +193,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations,
         cov3D_precomp,
             foveaStep,
+            gaze_x,  # gaze direction x
+            gaze_y,  # gaze direction y
+            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -302,6 +308,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations,
         cov3D_precomp,
             foveaStep,
+            gaze_x,  # gaze direction x
+            gaze_y,  # gaze direction y
+            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -391,6 +400,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations,
         cov3D_precomp,
             foveaStep,
+            gaze_x,  # gaze direction x
+            gaze_y,  # gaze direction y
+            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -477,6 +489,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations,
         cov3D_precomp,
             foveaStep,
+            gaze_x,  # gaze direction x
+            gaze_y,  # gaze direction y
+            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -562,6 +577,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations,
         cov3D_precomp,
             foveaStep,
+            gaze_x,  # gaze direction x
+            gaze_y,  # gaze direction y
+            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,

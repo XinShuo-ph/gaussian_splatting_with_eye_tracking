@@ -28,6 +28,9 @@ def rasterize_gaussians(
     rotations,
     cov3Ds_precomp,
         foveaStep,
+        gaze_x,  # gaze direction x
+        gaze_y,  # gaze direction y
+        gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
         out_color_precomp,
         # radii_precomp,
         # means2D_precomp,
@@ -53,6 +56,9 @@ def rasterize_gaussians(
         rotations,
         cov3Ds_precomp,
             foveaStep,
+            gaze_x,  # gaze direction x
+            gaze_y,  # gaze direction y
+            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -82,6 +88,9 @@ class _RasterizeGaussians(torch.autograd.Function):
         rotations,
         cov3Ds_precomp,
         foveaStep,
+        gaze_x,  # gaze direction x
+        gaze_y,  # gaze direction y
+        gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
         out_color_precomp,
         # radii_precomp,
         # means2D_precomp,
@@ -119,6 +128,9 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.campos,
             raster_settings.prefiltered,
             foveaStep,
+            gaze_x,  # gaze direction x
+            gaze_y,  # gaze direction y
+            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -267,6 +279,9 @@ class GaussianRasterizer(nn.Module):
 
     def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, scales = None, rotations = None, cov3D_precomp = None,
                 foveaStep = int(0),
+                gaze_x = 0,  # gaze direction x
+                gaze_y = 0,  # gaze direction y
+                gaze_r2 = 1e4 , gaze_r3=1e4, gaze_r4=1e4,  # radii of the foveal level 2,3,4
                 out_color_precomp = None,
                 # radii_precomp = None,
                 # means2D_precomp = None,
@@ -349,6 +364,9 @@ class GaussianRasterizer(nn.Module):
             rotations,
             cov3D_precomp,  
                 foveaStep,
+                gaze_x,  # gaze direction x
+                gaze_y,  # gaze direction y
+                gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
                 out_color_precomp,
                 # radii_precomp,
                 # means2D_precomp,

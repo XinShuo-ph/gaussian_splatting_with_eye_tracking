@@ -49,6 +49,9 @@ namespace CudaRasterizer
 			const float tan_fovx, float tan_fovy,
 			const bool prefiltered,
 			const int foveaStep,
+			const float gaze_x, // gaze direction x
+			const float gaze_y, // gaze direction y
+			const float gaze_r2, const float gaze_r3, const float gaze_r4, // radii of the foveal level 2,3,4
 			const float* out_color_precomp,
 			// const int* radii_precomp,
 			// const float* means2D_precomp,

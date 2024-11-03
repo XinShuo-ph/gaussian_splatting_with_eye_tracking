@@ -205,20 +205,52 @@ __global__ void setAMRLevelsKernel(uint32_t* n_intersections, uint32_t* percenti
 }
 
 // shall pass the fovea radii and centers of current step in the future
-__global__ void setFoveaAMRLevelsKernel(int foveaStep, 
-	uint32_t* tile_AMR_levels_last, uint32_t* tile_AMR_levels_current, uint32_t* tile_AMR_levels, int num_tiles)
+__global__ void setFoveaAMRLevelsKernel(int foveaStep, float gaze_x, float gaze_y, float gaze_r2, float gaze_r3, float gaze_r4,
+	uint32_t* tile_AMR_levels_last, uint32_t* tile_AMR_levels_current, uint32_t* tile_AMR_levels, int num_tiles, dim3 tile_grid)
 {
     auto idx = cg::this_grid().thread_rank();
     if (idx < num_tiles)
     {
         uint32_t current_level = tile_AMR_levels[idx]; // the AMR level for fully rendered image
+
+		// compute distance of current tile to gaze center
+		float tile_xid = (float)(idx % tile_grid.x);
+		tile_xid = tile_xid * (float)BLOCK_X + (float)BLOCK_X / 2.0f; // center of the tile
+        float tile_yid = (float)(idx / tile_grid.x); 
+        tile_yid = tile_yid * (float)BLOCK_Y + (float)BLOCK_Y / 2.0f; // center of the tile
         
+        float dx = tile_xid - gaze_x;
+        float dy = tile_yid - gaze_y;
+        float distsq = (dx*dx + dy*dy); // use square, avoid sqrt calculation
+
+        // Set AMR level based on distance from gaze point
+        if (distsq >= gaze_r2*gaze_r2) // outside of foveal level 2, reduce level by 3 
+		{
+			current_level = current_level > 3 ? (current_level-3) : 1;
+		}
+        else if (distsq >= gaze_r3*gaze_r3) // between r2 and r3, reduce level by 2
+        {
+            current_level = current_level > 2 ? (current_level-2) : 1;
+        }
+        else if (distsq >= gaze_r4*gaze_r4) // between r3 and r4, reduce level by 1
+        {
+            current_level = current_level > 1 ? (current_level-1) : 1;
+        }
+        else // inside foveal region r4, keep original level
+        {
+            current_level = current_level;
+        }
+
+            
+
         switch(foveaStep)
         {
 			case 0:
+				tile_AMR_levels_last[idx] = 0;
+				tile_AMR_levels_current[idx] = 0;
 				break; // Do nothing, only do preprocessing for step 0
 			case 1:
-				tile_AMR_levels_last[idx] = 0;
+				tile_AMR_levels_last[idx] = tile_AMR_levels_current[idx];
 				tile_AMR_levels_current[idx] = ((current_level >= 1) ? 1 : tile_AMR_levels_last[idx]);
 				break;
             case 2:
@@ -314,6 +346,9 @@ int CudaRasterizer::Rasterizer::forward(
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
 	const int foveaStep,
+	const float gaze_x, // gaze direction x
+	const float gaze_y, // gaze direction y
+	const float gaze_r2, const float gaze_r3, const float gaze_r4, // radii of the foveal level 2,3,4
 	const float* out_color_precomp,
 	// const int* radii_precomp,
 	// const float* means2D_precomp,
@@ -359,7 +394,38 @@ int CudaRasterizer::Rasterizer::forward(
 		if (debug){
 			std::cout << "CudaRasterizer::Rasterizer::forward() setFoveaAMRLevelsKernel" << std::endl;
 		}
-		setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels_current, imgState.tile_AMR_levels, num_tiles);
+		
+		if (debug){
+			// test if I compute the tile idx correctly
+			int test_idx = 125;
+			// compute distance of current tile to gaze center
+			float tile_xid = (float)(test_idx % tile_grid.x);
+			tile_xid = tile_xid * (float)BLOCK_X + (float)BLOCK_X / 2.0f; // center of the tile
+			float tile_yid = (float)(test_idx / tile_grid.x); 
+			tile_yid = tile_yid * (float)BLOCK_Y + (float)BLOCK_Y / 2.0f; // center of the tile
+			
+			float dx = tile_xid - gaze_x;
+			float dy = tile_yid - gaze_y;
+			float distsq = (dx*dx + dy*dy); // use square, avoid sqrt calculation
+
+			std::cout << "CudaRasterizer::Rasterizer::forward() test idx: " << test_idx 
+				<< " tile_xid: " << tile_xid 
+				<< " tile_yid: " << tile_yid
+				<< " distsq: " << distsq << std::endl;
+			test_idx = 64;
+			// compute distance of current tile to gaze center
+			tile_xid = (float)(test_idx % tile_grid.x);
+			tile_xid = tile_xid * (float)BLOCK_X + (float)BLOCK_X / 2.0f; // center of the tile
+			tile_yid = (float)(test_idx / tile_grid.x); 
+			tile_yid = tile_yid * (float)BLOCK_Y + (float)BLOCK_Y / 2.0f; // center of the tile
+
+			std::cout << "CudaRasterizer::Rasterizer::forward() test test_idx: " << test_idx 
+				<< " tile_xid: " << tile_xid 
+				<< " tile_yid: " << tile_yid
+				<< " distsq: " << distsq << std::endl;
+		}
+
+		setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, gaze_x, gaze_y, gaze_r2, gaze_r3, gaze_r4, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels_current, imgState.tile_AMR_levels, num_tiles, tile_grid);
 		CHECK_CUDA(, debug)
 		if (debug){
 			// Allocate host memory
@@ -647,13 +713,13 @@ int CudaRasterizer::Rasterizer::forward(
 	// Clean up
 	cudaFree(d_temp_storage);
 
+	setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, gaze_x, gaze_y, gaze_r2, gaze_r3, gaze_r4, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels_current, imgState.tile_AMR_levels, num_tiles, tile_grid);
+
 	// step 0: only preprocess
 	if (foveaStep == 0) {
 		return num_rendered;
 	}
 	// setting foveaStep = -1 will do rendering normally
-
-	setFoveaAMRLevelsKernel<<<(num_tiles + 255) / 256, 256>>>(foveaStep, imgState.tile_AMR_levels_last, imgState.tile_AMR_levels_current, imgState.tile_AMR_levels, num_tiles);
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
