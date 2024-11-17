@@ -1,0 +1,8 @@
+Looking for config file in output/06008696-3/cfg_args
+Config file found: output/06008696-3/cfg_args
+FovealNet process is using 40 stream multiprocessors.
+Looking for config file in output/06008696-3/cfg_args
+Config file found: output/06008696-3/cfg_args
+Gaussian Splatting process is using 40 stream multiprocessors.
+Rendering output/06008696-3/
+Loading trained model at iteration 30000 [17/11 01:28:33]

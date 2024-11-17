@@ -5,6 +5,7 @@ from scene import Scene
 import os
 from tqdm import tqdm
 from os import makedirs
+import time
 
 # from gaussian_renderer_amr import render, GaussianModel
 
@@ -111,26 +112,47 @@ if rank == 0:  # Gaussian Splatting process
 
 
     # test fps by counting time
-    starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    starter1, ender1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    starters = []
+    enders = []
+    starters1 = []
+    enders1 = []
+    for _, _ in enumerate(views):
+        starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        starter1, ender1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        starters.append(starter)
+        enders.append(ender)
+        starters1.append(starter1)
+        enders1.append(ender1)
 
+    # Create zero tensor for screenspace points
+    screenspace_points = torch.zeros_like(gaussians.get_xyz, dtype=gaussians.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+    try:
+        screenspace_points.retain_grad()
+    except:
+        pass
+    
+    # Get Gaussian parameters
+    means3D = gaussians.get_xyz
+    means2D = screenspace_points
+    opacity = gaussians.get_opacity
+
+    # Setup for covariance/scales/rotations
+    scales = gaussians.get_scaling
+    rotations = gaussians.get_rotation
+    shs = gaussians.get_features
+    
 
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         
         # Wait for FovealNet process to be ready
         comm.Barrier()
+        # torch.cuda.empty_cache()
 
 
         # precompute do not need gaze prediction
 
         # copy from render()
-        # Create zero tensor for screenspace points
-        screenspace_points = torch.zeros_like(gaussians.get_xyz, dtype=gaussians.get_xyz.dtype, requires_grad=True, device="cuda") + 0
-        try:
-            screenspace_points.retain_grad()
-        except:
-            pass
 
         # Set up rasterization configuration
         tanfovx = math.tan(view.FoVx * 0.5)
@@ -151,16 +173,6 @@ if rank == 0:  # Gaussian Splatting process
             debug=pipeline.debug
         )
 
-        # Get Gaussian parameters
-        means3D = gaussians.get_xyz
-        means2D = screenspace_points
-        opacity = gaussians.get_opacity
-
-        # Setup for covariance/scales/rotations
-        scales = gaussians.get_scaling
-        rotations = gaussians.get_rotation
-        shs = gaussians.get_features
-        
         colors_precomp = torch.Tensor([])
         cov3D_precomp = torch.Tensor([])
         # Create empty tensors for buffers
@@ -179,8 +191,11 @@ if rank == 0:  # Gaussian Splatting process
         # gaze_r4 = 1e6
 
 
-        time = 0
-        starter.record()
+        time_elapsed = 0
+        # if idx > 0:
+        #     torch.cuda.synchronize()
+        
+        # starters[idx].record()
         # step 0: compute only the buffers
         rendered_image0, radii, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
             means3D,
@@ -212,9 +227,9 @@ if rank == 0:  # Gaussian Splatting process
         )
         # ender.record()  
         # torch.cuda.synchronize()
-        # time += starter.elapsed_time(ender)
+        # time_elapsed += starter.elapsed_time(ender)
 
-        # print(f"[3DGS] view{idx}, Time for precompute: {time:.2f} ms")
+        # print(f"[3DGS] view{idx}, Time for precompute: {time_elapsed:.2f} ms")
 
         
         foveaStep = 1
@@ -225,7 +240,7 @@ if rank == 0:  # Gaussian Splatting process
         # gaze_r4 = 1e6
 
 
-        # time = 0
+        # time_elapsed = 0
         # starter1.record()
         # step 0: compute only the buffers
         rendered_image0, radii, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
@@ -241,7 +256,7 @@ if rank == 0:  # Gaussian Splatting process
                 gaze_x,  # gaze direction x
                 gaze_y,  # gaze direction y
                 1e6, 1e6, 1e6,  # radii of the foveal level 2,3,4
-                out_color_precomp,
+                rendered_image0,
                 # radii_precomp,
                 # means2D_precomp,
                 # conic_opacity_precomp,
@@ -250,44 +265,45 @@ if rank == 0:  # Gaussian Splatting process
                 # ranges_precomp,
                 # tile_AMR_levels_last,
                 # tile_AMR_levels_current,
-                geomBuffer_precomp,
-                binningBuffer_precomp,
-                imageBuffer_precomp,
+                geomBuffer,
+                binningBuffer,
+                imageBuffer,
                 False, # interpolate_image
             raster_settings,
         )
         # ender1.record()  
         # torch.cuda.synchronize()
-        # time += starter.elapsed_time(ender1)
+        # time_elapsed += starter.elapsed_time(ender1)
 
-        # print(f"[3DGS] view{idx}, Time for step1: {time:.2f} ms")
+        # print(f"[3DGS] view{idx}, Time for step1: {time_elapsed:.2f} ms")
 
-        ender.record()
+        # enders[idx].record()
         # torch.cuda.synchronize()
-        # time += starter.elapsed_time(ender)
-        # print(f"[3DGS] view{idx}, Time for precompute and step1: {time:.2f} ms")
+        # time_elapsed += starter.elapsed_time(ender)
+        # print(f"[3DGS] view{idx}, Time for precompute and step1: {time_elapsed:.2f} ms")
 
         for img_idx in range(50):
+            foveaStep = 0
             while foveaStep < 4: # i.e. render until reach highest foveal level
                 # sync gaze prediction
                 win1.Lock(1)
                 local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-                # print(f"Received gaze prediction: {local_gaze_buffer}")
+                print(f"Received gaze prediction: {local_gaze_buffer[img_idx]}")
                 win1.Unlock(1)
 
                 win2.Lock(1)
                 local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-                # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
+                print(f"Received fovealnet level: {local_fovealnet_level_buffer[img_idx]}")
                 win2.Unlock(1)
+
+                if foveaStep == local_fovealnet_level_buffer[img_idx]:
+                    # wait for the other rank 1 process to uupdate the gaze prediction intermediate step
+                    time.sleep(0.01)
+                    continue
 
                 foveaStep = local_fovealnet_level_buffer[img_idx]
                 gaze_x = local_gaze_buffer[img_idx][0]
                 gaze_y = local_gaze_buffer[img_idx][1]
-
-                # if foveaStep == 0:
-                    # wait for the other rank 1 process to finish the gaze prediction intermediate step
-                    
-                    # continue
 
 
                 # render according to this foveal level
@@ -392,13 +408,13 @@ else:  # FovealNet process
                         
                         end_time.record()
                         # torch.cuda.synchronize()
-                        elapsed_time = start_time.elapsed_time(end_time)
-                        total_time += elapsed_time
+                        # elapsed_time = start_time.elapsed_time(end_time)
+                        # total_time += elapsed_time
                         num_images += 1
 
-                        if args.foveal_layer_timer:
-                            for i in range(len(layer_times)):
-                                layer_times[i] += starters[i].elapsed_time(enders[i])
+                        # if args.foveal_layer_timer:
+                        #     for i in range(len(layer_times)):
+                        #         layer_times[i] += starters[i].elapsed_time(enders[i])
             
                     prediction = output.cpu().numpy()[0]
                     local_predictions_buffer[img_idx] = prediction  
@@ -423,15 +439,15 @@ else:  # FovealNet process
 
                     predictions.append((image_name, prediction))
 
-            average_time = total_time / num_images
-            print(f"Average inference time for sequence {seq_id}: {average_time:.2f} ms")
+            # average_time = total_time / num_images
+            # print(f"Average inference time for sequence {seq_id}: {average_time:.2f} ms")
 
-            if args.foveal_layer_timer:
-                print("\nLayer-wise timing:")
-                print(f"Patch embedding time: {layer_times[0]/num_images:.2f} ms")
-                for i, time in enumerate(layer_times[1:-1], 1):
-                    print(f"Transformer block {i} time: {time/num_images:.2f} ms")
-                print(f"Final layers time: {layer_times[-1]/num_images:.2f} ms")
+            # if args.foveal_layer_timer:
+            #     print("\nLayer-wise timing:")
+            #     print(f"Patch embedding time: {layer_times[0]/num_images:.2f} ms")
+            #     for i, time in enumerate(layer_times[1:-1], 1):
+            #         print(f"Transformer block {i} time: {time/num_images:.2f} ms")
+            #     print(f"Final layers time: {layer_times[-1]/num_images:.2f} ms")
 
             # Write predictions to output file
             output_file = f"predictions_{seq_id}.txt"

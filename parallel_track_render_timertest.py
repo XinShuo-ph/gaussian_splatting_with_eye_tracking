@@ -160,12 +160,14 @@ if rank == 0:  # Gaussian Splatting process
             
             win1.Lock(1)
             local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-            print(f"Received gaze prediction: {local_gaze_buffer}")
+            # print(f"Received gaze prediction: {local_gaze_buffer}")
+            print(f"Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
             win1.Unlock(1)
 
             win2.Lock(1)
             local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-            print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
+            # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
+            print(f"Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
             win2.Unlock(1)
             torch.cuda.synchronize()
             time += starter.elapsed_time(ender)

@@ -8,7 +8,6 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
-
 import numpy as np
 import torchvision
 
@@ -20,6 +19,8 @@ from diff_gaussian_rasterization_amr import _RasterizeGaussians
 
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
+
+
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, 
                 gaze_x = 0,  # gaze direction x
