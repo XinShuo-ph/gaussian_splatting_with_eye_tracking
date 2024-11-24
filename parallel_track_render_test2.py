@@ -345,326 +345,301 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
         print("Skipped pixels: ", np.sum(redmask))
         print("Total pixels: ", redmask.size) 
         torchvision.utils.save_image(rendered_image1, "tmp1.png")
+    out_color_precomp = out_color_precomp + rendered_image1
+
+
+    # co-design with fovealnet
+    for img_idx in range(50):
+        print("receiving fovealnet prediction for eye image index: ", img_idx)
+        foveaStep = 0
+        while foveaStep < 4: # i.e. render until reach highest foveal level
+            # sync gaze prediction
+            win1.Lock(1)
+            local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
+            print(f"Received gaze prediction: {local_gaze_buffer[img_idx]}")
+            win1.Unlock(1)
+
+            win2.Lock(1)
+            local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
+            print(f"Received fovealnet level: {local_fovealnet_level_buffer[img_idx]}")
+            win2.Unlock(1)
+
+            if foveaStep == local_fovealnet_level_buffer[img_idx]:
+                # wait for the other rank 1 process to uupdate the gaze prediction intermediate step
+                time.sleep(0.01)
+                continue
+
+            foveaStep = local_fovealnet_level_buffer[img_idx]
+            gaze_x = local_gaze_buffer[img_idx][0]
+            gaze_y = local_gaze_buffer[img_idx][1]
+
+
+            geomBuffer_precomp = geomBuffer
+            binningBuffer_precomp = binningBuffer
+            imageBuffer_precomp = imageBuffer
+            rendered_image0, radii, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
+                means3D,
+                means2D,
+                shs,
+                colors_precomp,
+                opacity,
+                scales,
+                rotations,
+                cov3D_precomp,
+                    foveaStep,
+                    gaze_x,  # gaze direction x
+                    gaze_y,  # gaze direction y
+                    gaze_r2,gaze_r3,gaze_r4,  # radii of the foveal level 2,3,4
+                    out_color_precomp,
+                    # radii_precomp,
+                    # means2D_precomp,
+                    # conic_opacity_precomp,
+                    # geom_rgb_precomp,
+                    # point_list_precomp,
+                    # ranges_precomp,
+                    # tile_AMR_levels_last,
+                    # tile_AMR_levels_current,
+                    geomBuffer_precomp,
+                    binningBuffer_precomp,
+                    imageBuffer_precomp,
+                    False, # interpolate_image
+                raster_settings,
+            )
+            out_color_precomp = out_color_precomp + rendered_image0
 
     # starting from step 2, we need gaze prediction
 
 
-    foveaStep = 2
-    buffered = True
-    out_color_precomp = out_color_precomp + rendered_image1
-    geomBuffer_precomp = geomBuffer
-    binningBuffer_precomp = binningBuffer
-    imageBuffer_precomp = imageBuffer
-    if pipe.debug:
-        reds = out_color_precomp[0].cpu().detach().numpy()
-        redmask = reds == 0
-        print("combined, Skipped pixels: ", np.sum(redmask))
-        print("combined, Total pixels: ", redmask.size) 
+    # foveaStep = 2
+    # buffered = True
+    # out_color_precomp = out_color_precomp + rendered_image1
+    # geomBuffer_precomp = geomBuffer
+    # binningBuffer_precomp = binningBuffer
+    # imageBuffer_precomp = imageBuffer
+    # if pipe.debug:
+    #     reds = out_color_precomp[0].cpu().detach().numpy()
+    #     redmask = reds == 0
+    #     print("combined, Skipped pixels: ", np.sum(redmask))
+    #     print("combined, Total pixels: ", redmask.size) 
     
     
     
-    win1.Lock(1)
-    local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-    # print(f"Received gaze prediction: {local_gaze_buffer}")
-    print(f" before render step {foveaStep} Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
-    win1.Unlock(1)
+    # win1.Lock(1)
+    # local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
+    # # print(f"Received gaze prediction: {local_gaze_buffer}")
+    # print(f" before render step {foveaStep} Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
+    # win1.Unlock(1)
 
-    win2.Lock(1)
-    local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-    # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
-    print(f" before render step {foveaStep} Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
-    win2.Unlock(1)
+    # win2.Lock(1)
+    # local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
+    # # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
+    # print(f" before render step {foveaStep} Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
+    # win2.Unlock(1)
 
 
-    if pipe.debug:
-        print(" fovea step 2 ")
-    if starters is not None:
-        starters[2].record()
+    # if pipe.debug:
+    #     print(" fovea step 2 ")
+    # if starters is not None:
+    #     starters[2].record()
     
 
     
-    rendered_image2, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
-        means3D,
-        means2D,
-        shs,
-        colors_precomp,
-        opacity,
-        scales,
-        rotations,
-        cov3D_precomp,
-            foveaStep,
-            gaze_x,  # gaze direction x
-            gaze_y,  # gaze direction y
-            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
-            out_color_precomp,
-            # radii_precomp,
-            # means2D_precomp,
-            # conic_opacity_precomp,
-            # geom_rgb_precomp,
-            # point_list_precomp,
-            # ranges_precomp,
-            # tile_AMR_levels_last,
-            # tile_AMR_levels_current,
-            geomBuffer_precomp,
-            binningBuffer_precomp,
-            imageBuffer_precomp,
-            False, # interpolate_image
-        raster_settings,
-    )
+    # rendered_image2, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
+    #     means3D,
+    #     means2D,
+    #     shs,
+    #     colors_precomp,
+    #     opacity,
+    #     scales,
+    #     rotations,
+    #     cov3D_precomp,
+    #         foveaStep,
+    #         gaze_x,  # gaze direction x
+    #         gaze_y,  # gaze direction y
+    #         gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
+    #         out_color_precomp,
+    #         # radii_precomp,
+    #         # means2D_precomp,
+    #         # conic_opacity_precomp,
+    #         # geom_rgb_precomp,
+    #         # point_list_precomp,
+    #         # ranges_precomp,
+    #         # tile_AMR_levels_last,
+    #         # tile_AMR_levels_current,
+    #         geomBuffer_precomp,
+    #         binningBuffer_precomp,
+    #         imageBuffer_precomp,
+    #         False, # interpolate_image
+    #     raster_settings,
+    # )
 
-    if enders is not None:
-        enders[2].record()
-
-    
-    if pipe.debug:
-        reds = rendered_image2[0].cpu().detach().numpy()
-        redmask = reds == 0
-        print("Skipped pixels: ", np.sum(redmask))
-        print("Total pixels: ", redmask.size) 
-        torchvision.utils.save_image(rendered_image2, "tmp2.png")
-
-
-    # step 3 is the same as parsed_tile_AMR_levels
-    # parsed_tile_AMR_levels_step3 = parsed_tile_AMR_levels.clone()
-
-
-    foveaStep = 3
-    out_color_precomp = out_color_precomp + rendered_image2
-    geomBuffer_precomp = geomBuffer
-    binningBuffer_precomp = binningBuffer
-    imageBuffer_precomp = imageBuffer
-    if pipe.debug:
-        reds = out_color_precomp[0].cpu().detach().numpy()
-        redmask = reds == 0
-        print("combined, Skipped pixels: ", np.sum(redmask))
-        print("combined, Total pixels: ", redmask.size) 
-    
-    win1.Lock(1)
-    local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-    # print(f"Received gaze prediction: {local_gaze_buffer}")
-    print(f" before render step {foveaStep} Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
-    win1.Unlock(1)
-
-    win2.Lock(1)
-    local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-    # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
-    print(f" before render step {foveaStep} Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
-    win2.Unlock(1)
-    
-    if pipe.debug:
-        print(" fovea step 3 ")
-    if starters is not None:
-        starters[3].record()
+    # if enders is not None:
+    #     enders[2].record()
 
     
-    rendered_image3, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
-        means3D,
-        means2D,
-        shs,
-        colors_precomp,
-        opacity,
-        scales,
-        rotations,
-        cov3D_precomp,
-            foveaStep,
-            gaze_x,  # gaze direction x
-            gaze_y,  # gaze direction y
-            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
-            out_color_precomp,
-            # radii_precomp,
-            # means2D_precomp,
-            # conic_opacity_precomp,
-            # geom_rgb_precomp,
-            # point_list_precomp,
-            # ranges_precomp,
-            # tile_AMR_levels_last,
-            # tile_AMR_levels_current,
-            geomBuffer_precomp,
-            binningBuffer_precomp,
-            imageBuffer_precomp,
-            False, # interpolate_image
-        raster_settings,
-    )
+    # if pipe.debug:
+    #     reds = rendered_image2[0].cpu().detach().numpy()
+    #     redmask = reds == 0
+    #     print("Skipped pixels: ", np.sum(redmask))
+    #     print("Total pixels: ", redmask.size) 
+    #     torchvision.utils.save_image(rendered_image2, "tmp2.png")
+
+
+    # # step 3 is the same as parsed_tile_AMR_levels
+    # # parsed_tile_AMR_levels_step3 = parsed_tile_AMR_levels.clone()
+
+
+    # foveaStep = 3
+    # out_color_precomp = out_color_precomp + rendered_image2
+    # geomBuffer_precomp = geomBuffer
+    # binningBuffer_precomp = binningBuffer
+    # imageBuffer_precomp = imageBuffer
+    # if pipe.debug:
+    #     reds = out_color_precomp[0].cpu().detach().numpy()
+    #     redmask = reds == 0
+    #     print("combined, Skipped pixels: ", np.sum(redmask))
+    #     print("combined, Total pixels: ", redmask.size) 
     
+    # win1.Lock(1)
+    # local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
+    # # print(f"Received gaze prediction: {local_gaze_buffer}")
+    # print(f" before render step {foveaStep} Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
+    # win1.Unlock(1)
 
-    if enders is not None:
-        enders[3].record()
-
-
-    if pipe.debug:
-        reds = rendered_image3[0].cpu().detach().numpy()
-        redmask = reds == 0
-        print("Skipped pixels: ", np.sum(redmask))
-        print("Total pixels: ", redmask.size) 
-        torchvision.utils.save_image(rendered_image3, "tmp3.png")
-
-
-    foveaStep = 4
-    out_color_precomp = out_color_precomp + rendered_image3
-    geomBuffer_precomp = geomBuffer
-    binningBuffer_precomp = binningBuffer
-    imageBuffer_precomp = imageBuffer
-    if pipe.debug:
-        reds = out_color_precomp[0].cpu().detach().numpy()
-        redmask = reds == 0
-        print("combined, Skipped pixels: ", np.sum(redmask))
-        print("combined, Total pixels: ", redmask.size) 
+    # win2.Lock(1)
+    # local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
+    # # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
+    # print(f" before render step {foveaStep} Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
+    # win2.Unlock(1)
     
-    win1.Lock(1)
-    local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-    # print(f"Received gaze prediction: {local_gaze_buffer}")
-    print(f" before render step {foveaStep} Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
-    win1.Unlock(1)
-
-    win2.Lock(1)
-    local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-    # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
-    print(f" before render step {foveaStep} Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
-    win2.Unlock(1)
-    
-    if pipe.debug:
-        print(" fovea step 4 ")
-
-    if starters is not None:
-        starters[4].record()
-
-
-    if test_no_render_laststep:
-        foveaStep = 3
-
-    rendered_image4, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
-        means3D,
-        means2D,
-        shs,
-        colors_precomp,
-        opacity,
-        scales,
-        rotations,
-        cov3D_precomp,
-            foveaStep,
-            gaze_x,  # gaze direction x
-            gaze_y,  # gaze direction y
-            gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
-            out_color_precomp,
-            # radii_precomp,
-            # means2D_precomp,
-            # conic_opacity_precomp,
-            # geom_rgb_precomp,
-            # point_list_precomp,
-            # ranges_precomp,
-            # tile_AMR_levels_last,
-            # tile_AMR_levels_current,
-            geomBuffer_precomp,
-            binningBuffer_precomp,
-            imageBuffer_precomp,
-            interpolate_image,
-        raster_settings,
-    )
-    
-    if ender is not None:
-        ender.record()
-
-    if enders is not None:
-        enders[4].record()
+    # if pipe.debug:
+    #     print(" fovea step 3 ")
+    # if starters is not None:
+    #     starters[3].record()
 
     
-    if pipe.debug:
-        reds = rendered_image4[0].cpu().detach().numpy()
-        redmask = reds == 0
-        print("Skipped pixels: ", np.sum(redmask))
-        print("Total pixels: ", redmask.size) 
-        torchvision.utils.save_image(rendered_image4, "tmp4.png")
-
-
-    out_color_precomp = out_color_precomp + rendered_image4
-
+    # rendered_image3, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
+    #     means3D,
+    #     means2D,
+    #     shs,
+    #     colors_precomp,
+    #     opacity,
+    #     scales,
+    #     rotations,
+    #     cov3D_precomp,
+    #         foveaStep,
+    #         gaze_x,  # gaze direction x
+    #         gaze_y,  # gaze direction y
+    #         gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
+    #         out_color_precomp,
+    #         # radii_precomp,
+    #         # means2D_precomp,
+    #         # conic_opacity_precomp,
+    #         # geom_rgb_precomp,
+    #         # point_list_precomp,
+    #         # ranges_precomp,
+    #         # tile_AMR_levels_last,
+    #         # tile_AMR_levels_current,
+    #         geomBuffer_precomp,
+    #         binningBuffer_precomp,
+    #         imageBuffer_precomp,
+    #         False, # interpolate_image
+    #     raster_settings,
+    # )
     
 
-    win1.Lock(1)
-    local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-    # print(f"Received gaze prediction: {local_gaze_buffer}")
-    print(f"Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
-    win1.Unlock(1)
-
-    win2.Lock(1)
-    local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-    # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
-    print(f"Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
-    win2.Unlock(1)
-
-    time.sleep(0.1)
+    # if enders is not None:
+    #     enders[3].record()
 
 
-    win1.Lock(1)
-    local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-    # print(f"Received gaze prediction: {local_gaze_buffer}")
-    print(f"Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
-    win1.Unlock(1)
-
-    win2.Lock(1)
-    local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-    # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
-    print(f"Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
-    win2.Unlock(1)
+    # if pipe.debug:
+    #     reds = rendered_image3[0].cpu().detach().numpy()
+    #     redmask = reds == 0
+    #     print("Skipped pixels: ", np.sum(redmask))
+    #     print("Total pixels: ", redmask.size) 
+    #     torchvision.utils.save_image(rendered_image3, "tmp3.png")
 
 
-    # # repeat the same process until all eye images are processed
-    # for img_idx in range(5):
-    #     foveaStep = 0
-    #     while foveaStep < 4: # i.e. render until reach highest foveal level
-    #         # sync gaze prediction
-    #         win1.Lock(1)
-    #         local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-    #         print(f"Received gaze prediction: {local_gaze_buffer[img_idx]}")
-    #         win1.Unlock(1)
+    # foveaStep = 4
+    # out_color_precomp = out_color_precomp + rendered_image3
+    # geomBuffer_precomp = geomBuffer
+    # binningBuffer_precomp = binningBuffer
+    # imageBuffer_precomp = imageBuffer
+    # if pipe.debug:
+    #     reds = out_color_precomp[0].cpu().detach().numpy()
+    #     redmask = reds == 0
+    #     print("combined, Skipped pixels: ", np.sum(redmask))
+    #     print("combined, Total pixels: ", redmask.size) 
+    
+    # win1.Lock(1)
+    # local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
+    # # print(f"Received gaze prediction: {local_gaze_buffer}")
+    # print(f" before render step {foveaStep} Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
+    # win1.Unlock(1)
 
-    #         win2.Lock(1)
-    #         local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-    #         print(f"Received fovealnet level: {local_fovealnet_level_buffer[img_idx]}")
-    #         win2.Unlock(1)
+    # win2.Lock(1)
+    # local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
+    # # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
+    # print(f" before render step {foveaStep} Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
+    # win2.Unlock(1)
 
-    #         if foveaStep == local_fovealnet_level_buffer[img_idx]:
-    #             # wait for the other rank 1 process to uupdate the gaze prediction intermediate step
-    #             time.sleep(0.01)
-    #             continue
+    # if pipe.debug:
+    #     print(" fovea step 4 ")
 
-    #         foveaStep = local_fovealnet_level_buffer[img_idx]
-    #         gaze_x = local_gaze_buffer[img_idx][0]
-    #         gaze_y = local_gaze_buffer[img_idx][1]
+    # if starters is not None:
+    #     starters[4].record()
 
 
-    #         # render according to this foveal level
-    #         # time = 0
-    #         # starter.record()
-    #         # step 0: compute only the buffers
-    #         rendered_image0, radii, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
-    #             means3D,
-    #             means2D,
-    #             shs,
-    #             colors_precomp,
-    #             opacity,
-    #             scales,
-    #             rotations,
-    #             cov3D_precomp,
-    #                 foveaStep,
-    #                 gaze_x,  # gaze direction x
-    #                 gaze_y,  # gaze direction y
-    #                 args.gaze_r2,args.gaze_r3,args.gaze_r4,  # radii of the foveal level 2,3,4
-    #                 out_color_precomp,
-    #                 # radii_precomp,
-    #                 # means2D_precomp,
-    #                 # conic_opacity_precomp,
-    #                 # geom_rgb_precomp,
-    #                 # point_list_precomp,
-    #                 # ranges_precomp,
-    #                 # tile_AMR_levels_last,
-    #                 # tile_AMR_levels_current,
-    #                 geomBuffer_precomp,
-    #                 binningBuffer_precomp,
-    #                 imageBuffer_precomp,
-    #                 False, # interpolate_image
-    #             raster_settings,
-    #         )
+    # if test_no_render_laststep:
+    #     foveaStep = 3
+
+    # rendered_image4, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
+    #     means3D,
+    #     means2D,
+    #     shs,
+    #     colors_precomp,
+    #     opacity,
+    #     scales,
+    #     rotations,
+    #     cov3D_precomp,
+    #         foveaStep,
+    #         gaze_x,  # gaze direction x
+    #         gaze_y,  # gaze direction y
+    #         gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
+    #         out_color_precomp,
+    #         # radii_precomp,
+    #         # means2D_precomp,
+    #         # conic_opacity_precomp,
+    #         # geom_rgb_precomp,
+    #         # point_list_precomp,
+    #         # ranges_precomp,
+    #         # tile_AMR_levels_last,
+    #         # tile_AMR_levels_current,
+    #         geomBuffer_precomp,
+    #         binningBuffer_precomp,
+    #         imageBuffer_precomp,
+    #         interpolate_image,
+    #     raster_settings,
+    # )
+    
+    # if ender is not None:
+    #     ender.record()
+
+    # if enders is not None:
+    #     enders[4].record()
+
+    
+    # if pipe.debug:
+    #     reds = rendered_image4[0].cpu().detach().numpy()
+    #     redmask = reds == 0
+    #     print("Skipped pixels: ", np.sum(redmask))
+    #     print("Total pixels: ", redmask.size) 
+    #     torchvision.utils.save_image(rendered_image4, "tmp4.png")
+
+
+    # out_color_precomp = out_color_precomp + rendered_image4
+
+    
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
@@ -723,17 +698,17 @@ if rank == 0:  # Gaussian Splatting process
     torch.cuda.synchronize()
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        
+        print(f"Rendering view {idx} in 3DGS, comm.Barrier()")
         # Wait for FovealNet process to be ready
         comm.Barrier()
         
 
-        timeall = 0
-        time0 = 0
-        time1 = 0
-        time2 = 0
-        time3 = 0
-        time4 = 0
+        # timeall = 0
+        # time0 = 0
+        # time1 = 0
+        # time2 = 0
+        # time3 = 0
+        # time4 = 0
         rendering = render_mpi(view, gaussians, pipeline, background,starter = starter, ender= ender, 
                                starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
                                test_no_render_laststep=args.test_no_render_laststep
@@ -751,18 +726,18 @@ if rank == 0:  # Gaussian Splatting process
             # print(f"Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
             # win2.Unlock(1)
         torch.cuda.synchronize()
-        timeall += starter.elapsed_time(ender)
-        time0 += starter0.elapsed_time(ender0)
-        time1 += starter1.elapsed_time(ender1)
-        time2 += starter2.elapsed_time(ender2)
-        time3 += starter3.elapsed_time(ender3)
-        time4 += starter4.elapsed_time(ender4)
-        print(f"Rendering time for view {idx}: {timeall:.2f} ms")
-        print(f"Rendering time for view {idx} step 0: {time0:.2f} ms")
-        print(f"Rendering time for view {idx} step 1: {time1:.2f} ms")
-        print(f"Rendering time for view {idx} step 2: {time2:.2f} ms")
-        print(f"Rendering time for view {idx} step 3: {time3:.2f} ms")
-        print(f"Rendering time for view {idx} step 4: {time4:.2f} ms")
+        # timeall += starter.elapsed_time(ender)
+        # time0 += starter0.elapsed_time(ender0)
+        # time1 += starter1.elapsed_time(ender1)
+        # time2 += starter2.elapsed_time(ender2)
+        # time3 += starter3.elapsed_time(ender3)
+        # time4 += starter4.elapsed_time(ender4)
+        # print(f"Rendering time for view {idx}: {timeall:.2f} ms")
+        # print(f"Rendering time for view {idx} step 0: {time0:.2f} ms")
+        # print(f"Rendering time for view {idx} step 1: {time1:.2f} ms")
+        # print(f"Rendering time for view {idx} step 2: {time2:.2f} ms")
+        # print(f"Rendering time for view {idx} step 3: {time3:.2f} ms")
+        # print(f"Rendering time for view {idx} step 4: {time4:.2f} ms")
         
 
 
@@ -779,103 +754,16 @@ else:  # FovealNet process
     model.load_state_dict(torch.load(args.foveal_model_path, map_location=device))
     model.eval()
 
-    if args.eye_image_sequence_id_start is not None and args.eye_image_sequence_id_end is not None:
+    # if args.eye_image_sequence_id_start is not None and args.eye_image_sequence_id_end is not None:
+    
+    # for sceneidx in range(100):
+
+    for seq_id in range(args.eye_image_sequence_id_start, args.eye_image_sequence_id_end ):
+        # Wait for Gaussian Splatting process to be ready
+        print(f"inferencing sequence {seq_id} in FovealNet, comm.Barrier()")
+        comm.Barrier()
+        # torch.cuda.empty_cache()
         
-
-        for seq_id in range(args.eye_image_sequence_id_start, args.eye_image_sequence_id_end ):
-            # Wait for Gaussian Splatting process to be ready
-            comm.Barrier()
-            torch.cuda.empty_cache()
-            
-            # Create CUDA events for timing if foveal_layer_timer is enabled
-            if args.foveal_layer_timer:
-                num_events = len(model.transformer_layers) + 2  # +1 for patch embedding, +1 for final layers
-                starters = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
-                enders = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
-            else:
-                starters, enders = None, None
-            sequence_folder = os.path.join(args.eye_image_sequence_folder, f"{seq_id:04d}")
-            if not os.path.exists(sequence_folder):
-                print(f"Skipping sequence {seq_id} as it does not exist")
-                continue
-
-            # Process images and make predictions
-            predictions = []
-            total_time = 0
-            num_images = 0
-            layer_times = [0] * (len(model.transformer_layers) + 2) if args.foveal_layer_timer else None
-
-            local_predictions_buffer = np.zeros((150, 2), dtype=np.float32) 
-            local_fovealnet_level_buffer = np.zeros(150, dtype=np.int32)
-
-            # for image_name in tqdm(os.listdir(sequence_folder), desc=f"Processing sequence {seq_id}"):
-            # Remove tqdm and process images without progress bar
-            img_idx = -1
-            for image_name in os.listdir(sequence_folder):
-                if image_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    image_path = os.path.join(sequence_folder, image_name)
-                    image = load_image(image_path).to(device)
-                    img_idx += 1
-
-                    with torch.no_grad():
-                        start_time = torch.cuda.Event(enable_timing=True)
-                        end_time = torch.cuda.Event(enable_timing=True)
-                        start_time.record()
-                        
-                        if args.foveal_layer_timer:
-                            output = model.forward_timer(image, starters, enders)
-                        else:
-                            output = model(image)
-                        
-                        end_time.record()
-                        torch.cuda.synchronize()
-                        elapsed_time = start_time.elapsed_time(end_time)
-                        total_time += elapsed_time
-                        num_images += 1
-
-                        if args.foveal_layer_timer:
-                            for i in range(len(layer_times)):
-                                layer_times[i] += starters[i].elapsed_time(enders[i])
-            
-                    prediction = output.cpu().numpy()[0]
-                    local_predictions_buffer[img_idx] = prediction  
-                    local_fovealnet_level_buffer[img_idx] = 4
-                    # # Send gaze prediction to Gaussian Splatting process
-                    # comm.Send(gaze_prediction, dest=0)
-
-                    # # Update the shared gaze prediction
-                    # win.Lock(0)  # Lock for writing
-                    # win.Put(prediction, 0)
-                    # print(f"Write prediction to shared memory: {prediction}")
-                    # win.Unlock(0)
-
-                    win1.Lock(0)
-                    win1.Put(local_predictions_buffer, 0)
-                    win1.Unlock(0)
-
-                    win2.Lock(0)
-                    win2.Put(local_fovealnet_level_buffer, 0)
-                    win2.Unlock(0)
-            
-
-                    predictions.append((image_name, prediction))
-
-            average_time = total_time / num_images
-            print(f"Average inference time for sequence {seq_id}: {average_time:.2f} ms")
-
-            if args.foveal_layer_timer:
-                print("\nLayer-wise timing:")
-                print(f"Patch embedding time: {layer_times[0]/num_images:.2f} ms")
-                for i, time in enumerate(layer_times[1:-1], 1):
-                    print(f"Transformer block {i} time: {time/num_images:.2f} ms")
-                print(f"Final layers time: {layer_times[-1]/num_images:.2f} ms")
-
-            # Write predictions to output file
-            output_file = f"predictions_{seq_id}.txt"
-            with open(output_file, 'w') as f:
-                for image_name, prediction in predictions:
-                    f.write(f"{image_name}: Pitch={prediction[0]:.4f}, Yaw={prediction[1]:.4f}\n")
-    else:
         # Create CUDA events for timing if foveal_layer_timer is enabled
         if args.foveal_layer_timer:
             num_events = len(model.transformer_layers) + 2  # +1 for patch embedding, +1 for final layers
@@ -883,16 +771,28 @@ else:  # FovealNet process
             enders = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
         else:
             starters, enders = None, None
+        sequence_folder = os.path.join(args.eye_image_sequence_folder, f"{seq_id:04d}")
+        if not os.path.exists(sequence_folder):
+            print(f"Skipping sequence {seq_id} as it does not exist")
+            continue
+
         # Process images and make predictions
         predictions = []
         total_time = 0
         num_images = 0
         layer_times = [0] * (len(model.transformer_layers) + 2) if args.foveal_layer_timer else None
-        
-        for image_name in tqdm(os.listdir(args.eye_image_folder), desc="Processing images"):
+
+        local_predictions_buffer = np.zeros((150, 2), dtype=np.float32) 
+        local_fovealnet_level_buffer = np.zeros(150, dtype=np.int32)
+
+        # for image_name in tqdm(os.listdir(sequence_folder), desc=f"Processing sequence {seq_id}"):
+        # Remove tqdm and process images without progress bar
+        img_idx = -1
+        for image_name in os.listdir(sequence_folder):
             if image_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                image_path = os.path.join(args.eye_image_folder, image_name)
+                image_path = os.path.join(sequence_folder, image_name)
                 image = load_image(image_path).to(device)
+                img_idx += 1
 
                 with torch.no_grad():
                     start_time = torch.cuda.Event(enable_timing=True)
@@ -914,21 +814,45 @@ else:  # FovealNet process
                         for i in range(len(layer_times)):
                             layer_times[i] += starters[i].elapsed_time(enders[i])
         
-
                 prediction = output.cpu().numpy()[0]
+                local_predictions_buffer[img_idx] = prediction  
+                local_fovealnet_level_buffer[img_idx] = 4
                 # # Send gaze prediction to Gaussian Splatting process
                 # comm.Send(gaze_prediction, dest=0)
 
                 # # Update the shared gaze prediction
-                win.Lock(0)  # Lock for writing
-                # sync_gaze_prediction[:] = prediction  # Update shared memory
-                win.Put(prediction, 0)
+                # win.Lock(0)  # Lock for writing
+                # win.Put(prediction, 0)
                 # print(f"Write prediction to shared memory: {prediction}")
-                win.Unlock(0)
+                # win.Unlock(0)
 
+                win1.Lock(0)
+                win1.Put(local_predictions_buffer, 0)
+                win1.Unlock(0)
 
+                win2.Lock(0)
+                win2.Put(local_fovealnet_level_buffer, 0)
+                win2.Unlock(0)
+        
 
                 predictions.append((image_name, prediction))
+
+        average_time = total_time / num_images
+        print(f"Average inference time for sequence {seq_id}: {average_time:.2f} ms")
+
+        if args.foveal_layer_timer:
+            print("\nLayer-wise timing:")
+            print(f"Patch embedding time: {layer_times[0]/num_images:.2f} ms")
+            for i, time in enumerate(layer_times[1:-1], 1):
+                print(f"Transformer block {i} time: {time/num_images:.2f} ms")
+            print(f"Final layers time: {layer_times[-1]/num_images:.2f} ms")
+
+        # Write predictions to output file
+        output_file = f"predictions_{seq_id}.txt"
+        with open(output_file, 'w') as f:
+            for image_name, prediction in predictions:
+                f.write(f"{image_name}: Pitch={prediction[0]:.4f}, Yaw={prediction[1]:.4f}\n")
+
 
         average_time = total_time / num_images
         print(f"Average inference time: {average_time:.2f} ms")
