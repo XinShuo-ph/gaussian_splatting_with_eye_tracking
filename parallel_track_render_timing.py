@@ -24,7 +24,7 @@ import torch.nn as nn
 from torchvision import transforms
 from PIL import Image
 import argparse
-from fovealnet.timm_vit import VisionTransformer
+# from fovealnet.timm_vit import VisionTransformer
 
 def load_image(image_path):
     image = Image.open(image_path).convert("L")
@@ -57,6 +57,10 @@ parser.add_argument("--skip_train", action="store_true")
 parser.add_argument("--skip_test", action="store_true")
 parser.add_argument("--quiet", action="store_true")
 parser.add_argument("--test_no_render_laststep", action="store_true") # test the time of purely passing the data in foveastep 4
+parser.add_argument("--angle_to_pix_radius", default=600.0, type=float) # a factor (radius) to convert pitch and yaw angles to pixel position of the gaze
+parser.add_argument("--gaze_r2", default=600, type=float)
+parser.add_argument("--gaze_r3", default=400, type=float)
+parser.add_argument("--gaze_r4", default=200, type=float)
 args = get_combined_args(parser)
 
 
@@ -77,6 +81,10 @@ win = MPI.Win.Create(sync_gaze_prediction, comm=comm)
 gaze_predictions_buffer = np.zeros((150, 2), dtype=np.float32) # at most 150 gaze for each head position
 fovealnet_level_buffer = np.zeros(150, dtype=np.int32)
 
+
+local_predictions_buffer = np.zeros((150, 2), dtype=np.float32) 
+local_fovealnet_level_buffer = np.zeros(150, dtype=np.int32)
+
 win1 = MPI.Win.Create(gaze_predictions_buffer, comm=comm)
 win2 = MPI.Win.Create(fovealnet_level_buffer, comm=comm)
 
@@ -88,7 +96,7 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
                 gaze_x = 0,  # gaze direction x
                 gaze_y = 0,  # gaze direction y
                 gaze_r2 = 1e4 , gaze_r3=1e4, gaze_r4=1e4,  # radii of the foveal level 2,3,4
-           starter=None,ender=None, starters=None, enders=None,
+           starter=None,ender=None, starters=None, enders=None, steps_performed=None,
            interpolate_image = False, test_no_render_laststep=False):
     """
     Render the scene. 
@@ -160,22 +168,7 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
             shs = pc.get_features
     else:
         colors_precomp = override_color
-    
-    # # for now manually set the centers of the 3 fovea steps to image center
-    # foveaCenters = torch.tensor([[viewpoint_camera.image_width/2, viewpoint_camera.image_height/2], 
-    #                               [viewpoint_camera.image_width/2, viewpoint_camera.image_height/2],
-    #                               [viewpoint_camera.image_width/2, viewpoint_camera.image_height/2],
-    #                               [viewpoint_camera.image_width/2, viewpoint_camera.image_height/2]], device='cuda')
-    # foveaRadii = torch.tensor([viewpoint_camera.image_width/2, 
-    #                              viewpoint_camera.image_width/4, 
-    #                              viewpoint_camera.image_width/8, 
-    #                              viewpoint_camera.image_width/16], device='cuda')
-
-    # I record times here because the color and cov are not computed in python when testing fps
-    # loading gaussian model parameters in python took similar time as rendering 
-    # this is also what fov-3DGS does: Fov-3DGS/fov3dgs/gaussian_renderer_fov_mmfr/__init__.py:72
-
-
+  
     # when using the raw rasterizer
     if shs is None:
         shs = torch.Tensor([])
@@ -204,46 +197,11 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
     if starter is not None:
         starter.record()
 
+    if steps_performed is not None:
+        steps_performed[0] = 1
     if starters is not None:
         starters[0].record()
 
-
-    # radii = torch.empty(0, dtype=torch.int32, device='cuda')
-    # parsed_point_list = torch.empty(0, dtype=torch.int32, device='cuda')
-    # parsed_ranges = torch.empty(0, dtype=torch.int32, device='cuda')
-    # parsed_tile_AMR_levels = torch.empty(0, dtype=torch.int32, device='cuda')
-    # geomBuffer = torch.empty(0, dtype=torch.int8, device='cuda')
-    # binningBuffer = torch.empty(0, dtype=torch.int8, device='cuda')
-    # imgBuffer = torch.empty(0, dtype=torch.int8, device='cuda')
-
-    
-
-    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    # rendered_image, radii = rasterizer(
-    #     means3D = means3D,
-    #     means2D = means2D,
-    #     shs = shs,
-    #     colors_precomp = colors_precomp,
-    #     opacities = opacity,
-    #     scales = scales,
-    #     rotations = rotations,
-    #     cov3D_precomp = cov3D_precomp,
-    #     foveaStep = int(0),
-    #     out_color_precomp = None,
-    #     # radii_precomp = None,
-    #     # means2D_precomp = None,
-    #     # conic_opacity_precomp = None,
-    #     # geom_rgb_precomp = None,
-    #     # point_list_precomp = None,
-    #     # ranges_precomp = None,
-    #     # tile_AMR_levels_last = None,
-    #     # tile_AMR_levels_current = None,
-    #     # geomBuffer_precomp = None,
-    #     # binningBuffer_precomp = None,
-    #     # imageBuffer_precomp = None,
-    #     buffered = False,
-    #     interpolate_image = interpolate_image
-    # )
 
     # step 0: compute only the buffers
     rendered_image0, radii, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
@@ -303,6 +261,9 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
     if pipe.debug:
         print(" fovea step 1 ")
 
+
+    if steps_performed is not None:
+        steps_performed[1] = 1
     if starters is not None:
         starters[1].record()
 
@@ -356,7 +317,7 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
             # sync gaze prediction
             win1.Lock(1)
             local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-            print(f"Received gaze prediction: {local_gaze_buffer[img_idx]}")
+            print(f"Received gaze angle prediction: {local_gaze_buffer[img_idx]}")
             win1.Unlock(1)
 
             win2.Lock(1)
@@ -366,13 +327,22 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
 
             if foveaStep == local_fovealnet_level_buffer[img_idx]:
                 # wait for the other rank 1 process to uupdate the gaze prediction intermediate step
-                time.sleep(0.01)
+                time.sleep(0.002)
                 continue
 
             foveaStep = local_fovealnet_level_buffer[img_idx]
-            gaze_x = local_gaze_buffer[img_idx][0]
-            gaze_y = local_gaze_buffer[img_idx][1]
+            mid_x = (pix_x*ratio) / 2
+            mid_y = (pix_y*ratio) / 2
+            gaze_x = np.sin(local_gaze_buffer[img_idx][0]) * args.angle_to_pix_radius + mid_x
+            gaze_y = np.sin(local_gaze_buffer[img_idx][1]) * args.angle_to_pix_radius + mid_y
 
+            print(f"gaze at pixel: {gaze_x}, {gaze_y}")
+
+            if steps_performed is not None:
+                steps_performed[foveaStep + img_idx*5] = 1
+
+            if starters is not None:
+                starters[foveaStep + img_idx*5].record()
 
             geomBuffer_precomp = geomBuffer
             binningBuffer_precomp = binningBuffer
@@ -406,243 +376,12 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
                 raster_settings,
             )
             out_color_precomp = out_color_precomp + rendered_image0
+            if enders is not None:
+                enders[foveaStep + img_idx*5].record()
 
-    # starting from step 2, we need gaze prediction
+    if ender is not None:
+        ender.record()
 
-
-    # foveaStep = 2
-    # buffered = True
-    # out_color_precomp = out_color_precomp + rendered_image1
-    # geomBuffer_precomp = geomBuffer
-    # binningBuffer_precomp = binningBuffer
-    # imageBuffer_precomp = imageBuffer
-    # if pipe.debug:
-    #     reds = out_color_precomp[0].cpu().detach().numpy()
-    #     redmask = reds == 0
-    #     print("combined, Skipped pixels: ", np.sum(redmask))
-    #     print("combined, Total pixels: ", redmask.size) 
-    
-    
-    
-    # win1.Lock(1)
-    # local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-    # # print(f"Received gaze prediction: {local_gaze_buffer}")
-    # print(f" before render step {foveaStep} Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
-    # win1.Unlock(1)
-
-    # win2.Lock(1)
-    # local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-    # # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
-    # print(f" before render step {foveaStep} Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
-    # win2.Unlock(1)
-
-
-    # if pipe.debug:
-    #     print(" fovea step 2 ")
-    # if starters is not None:
-    #     starters[2].record()
-    
-
-    
-    # rendered_image2, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
-    #     means3D,
-    #     means2D,
-    #     shs,
-    #     colors_precomp,
-    #     opacity,
-    #     scales,
-    #     rotations,
-    #     cov3D_precomp,
-    #         foveaStep,
-    #         gaze_x,  # gaze direction x
-    #         gaze_y,  # gaze direction y
-    #         gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
-    #         out_color_precomp,
-    #         # radii_precomp,
-    #         # means2D_precomp,
-    #         # conic_opacity_precomp,
-    #         # geom_rgb_precomp,
-    #         # point_list_precomp,
-    #         # ranges_precomp,
-    #         # tile_AMR_levels_last,
-    #         # tile_AMR_levels_current,
-    #         geomBuffer_precomp,
-    #         binningBuffer_precomp,
-    #         imageBuffer_precomp,
-    #         False, # interpolate_image
-    #     raster_settings,
-    # )
-
-    # if enders is not None:
-    #     enders[2].record()
-
-    
-    # if pipe.debug:
-    #     reds = rendered_image2[0].cpu().detach().numpy()
-    #     redmask = reds == 0
-    #     print("Skipped pixels: ", np.sum(redmask))
-    #     print("Total pixels: ", redmask.size) 
-    #     torchvision.utils.save_image(rendered_image2, "tmp2.png")
-
-
-    # # step 3 is the same as parsed_tile_AMR_levels
-    # # parsed_tile_AMR_levels_step3 = parsed_tile_AMR_levels.clone()
-
-
-    # foveaStep = 3
-    # out_color_precomp = out_color_precomp + rendered_image2
-    # geomBuffer_precomp = geomBuffer
-    # binningBuffer_precomp = binningBuffer
-    # imageBuffer_precomp = imageBuffer
-    # if pipe.debug:
-    #     reds = out_color_precomp[0].cpu().detach().numpy()
-    #     redmask = reds == 0
-    #     print("combined, Skipped pixels: ", np.sum(redmask))
-    #     print("combined, Total pixels: ", redmask.size) 
-    
-    # win1.Lock(1)
-    # local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-    # # print(f"Received gaze prediction: {local_gaze_buffer}")
-    # print(f" before render step {foveaStep} Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
-    # win1.Unlock(1)
-
-    # win2.Lock(1)
-    # local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-    # # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
-    # print(f" before render step {foveaStep} Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
-    # win2.Unlock(1)
-    
-    # if pipe.debug:
-    #     print(" fovea step 3 ")
-    # if starters is not None:
-    #     starters[3].record()
-
-    
-    # rendered_image3, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
-    #     means3D,
-    #     means2D,
-    #     shs,
-    #     colors_precomp,
-    #     opacity,
-    #     scales,
-    #     rotations,
-    #     cov3D_precomp,
-    #         foveaStep,
-    #         gaze_x,  # gaze direction x
-    #         gaze_y,  # gaze direction y
-    #         gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
-    #         out_color_precomp,
-    #         # radii_precomp,
-    #         # means2D_precomp,
-    #         # conic_opacity_precomp,
-    #         # geom_rgb_precomp,
-    #         # point_list_precomp,
-    #         # ranges_precomp,
-    #         # tile_AMR_levels_last,
-    #         # tile_AMR_levels_current,
-    #         geomBuffer_precomp,
-    #         binningBuffer_precomp,
-    #         imageBuffer_precomp,
-    #         False, # interpolate_image
-    #     raster_settings,
-    # )
-    
-
-    # if enders is not None:
-    #     enders[3].record()
-
-
-    # if pipe.debug:
-    #     reds = rendered_image3[0].cpu().detach().numpy()
-    #     redmask = reds == 0
-    #     print("Skipped pixels: ", np.sum(redmask))
-    #     print("Total pixels: ", redmask.size) 
-    #     torchvision.utils.save_image(rendered_image3, "tmp3.png")
-
-
-    # foveaStep = 4
-    # out_color_precomp = out_color_precomp + rendered_image3
-    # geomBuffer_precomp = geomBuffer
-    # binningBuffer_precomp = binningBuffer
-    # imageBuffer_precomp = imageBuffer
-    # if pipe.debug:
-    #     reds = out_color_precomp[0].cpu().detach().numpy()
-    #     redmask = reds == 0
-    #     print("combined, Skipped pixels: ", np.sum(redmask))
-    #     print("combined, Total pixels: ", redmask.size) 
-    
-    # win1.Lock(1)
-    # local_gaze_buffer = np.array(gaze_predictions_buffer)  # Make a local copy
-    # # print(f"Received gaze prediction: {local_gaze_buffer}")
-    # print(f" before render step {foveaStep} Received gaze prediction: {local_gaze_buffer[local_gaze_buffer[:,0] != 0]}")
-    # win1.Unlock(1)
-
-    # win2.Lock(1)
-    # local_fovealnet_level_buffer = np.array(fovealnet_level_buffer)  # Make a local copy
-    # # print(f"Received fovealnet level: {local_fovealnet_level_buffer}")
-    # print(f" before render step {foveaStep} Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
-    # win2.Unlock(1)
-
-    # if pipe.debug:
-    #     print(" fovea step 4 ")
-
-    # if starters is not None:
-    #     starters[4].record()
-
-
-    # if test_no_render_laststep:
-    #     foveaStep = 3
-
-    # rendered_image4, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(
-    #     means3D,
-    #     means2D,
-    #     shs,
-    #     colors_precomp,
-    #     opacity,
-    #     scales,
-    #     rotations,
-    #     cov3D_precomp,
-    #         foveaStep,
-    #         gaze_x,  # gaze direction x
-    #         gaze_y,  # gaze direction y
-    #         gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
-    #         out_color_precomp,
-    #         # radii_precomp,
-    #         # means2D_precomp,
-    #         # conic_opacity_precomp,
-    #         # geom_rgb_precomp,
-    #         # point_list_precomp,
-    #         # ranges_precomp,
-    #         # tile_AMR_levels_last,
-    #         # tile_AMR_levels_current,
-    #         geomBuffer_precomp,
-    #         binningBuffer_precomp,
-    #         imageBuffer_precomp,
-    #         interpolate_image,
-    #     raster_settings,
-    # )
-    
-    # if ender is not None:
-    #     ender.record()
-
-    # if enders is not None:
-    #     enders[4].record()
-
-    
-    # if pipe.debug:
-    #     reds = rendered_image4[0].cpu().detach().numpy()
-    #     redmask = reds == 0
-    #     print("Skipped pixels: ", np.sum(redmask))
-    #     print("Total pixels: ", redmask.size) 
-    #     torchvision.utils.save_image(rendered_image4, "tmp4.png")
-
-
-    # out_color_precomp = out_color_precomp + rendered_image4
-
-    
-
-    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
-    # They will be excluded from value updates used in the splitting criteria.
     return {"render": out_color_precomp,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
@@ -656,9 +395,232 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
             }
 
 
+# also define vison transformer here to use mpi communication
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import timm
+from thop import profile
+import random
+
+class VisionTransformer(nn.Module):
+    def __init__(
+        self,
+        num_layers=12,
+        top_k=1,
+        prune_ratio=0.0,
+        target_prune_ratio=0.5,
+        prune_step=0.05,
+        score_method="attention",
+    ):
+        super(VisionTransformer, self).__init__()
+
+        self.backbone = timm.create_model("vit_small_patch16_224", pretrained=True)
+
+        self.backbone.patch_embed.proj = nn.Conv2d(1, 384, kernel_size=16, stride=16)
+
+        in_features = self.backbone.head.in_features
+        self.backbone.head = nn.Identity()
+
+        self.num_layers = num_layers
+        self.transformer_layers = nn.ModuleList(
+            [self.backbone.blocks[i] for i in range(self.num_layers)]
+        )
+        
+        self.fc1 = nn.Linear(in_features, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, 2)
+        
+        self.top_k = top_k
+        self.score_method = score_method
+        self.prune_ratio = prune_ratio
+        self.prune_step = prune_step
+        self.target_prune_ratio = target_prune_ratio
+
+        self.attention_scores = None
+        self.backbone.blocks = None
+        self.register_hooks()
+
+    def hook_fn(self, module, input, output):
+        self.attention_scores = module.attn_drop(output)
+    # def hook_fn(self, module, input, output):
+    #     self.attention_scores = output[1]
+    #     print("Attention scores shape:", self.attention_scores.shape)
+
+    def register_hooks(self):
+        for block in self.transformer_layers:
+            block.attn.register_forward_hook(self.hook_fn)
+
+    def prune_heads(self):
+        current_prune_ratio = min(self.prune_ratio, self.target_prune_ratio)
+        for block in self.transformer_layers:
+            attn_weights = self.attention_scores 
+            importance_scores = attn_weights.mean(dim=1).mean(dim=1).cpu().numpy()
+            num_heads_to_prune = int(block.attn.num_heads * current_prune_ratio)
+            pruned_heads = importance_scores.argsort()[:num_heads_to_prune]
+            for head in pruned_heads:
+                block.attn.head_mask[head] = 0
+        
+        self.prune_ratio += self.prune_step
+
+    def random_prune_heads(self):
+        for block in self.transformer_layers:
+            num_heads = block.attn.num_heads
+            num_heads_to_prune = num_heads // 3 
+            pruned_heads = random.sample(range(num_heads), num_heads_to_prune)
+
+            for head in pruned_heads:
+                self.attention_weights[:, head, :, :] = 0.0
+
+    def forward(self, x):
+        # self.register_hooks()
+
+        x = self.backbone.patch_embed(x)
+        if self.backbone.pos_embed.shape[1] == 197 and x.shape[1] == 196:
+            pos_embed = self.backbone.pos_embed[:, 1:, :] 
+        else:
+            pos_embed = self.backbone.pos_embed
+    
+        x = self.backbone.pos_drop(x + pos_embed)
+
+        for i, block in enumerate(self.transformer_layers):
+            # print(block)
+            x = block(x)
+            if i%2 ==1:
+                if self.score_method == "attention":
+                    attn_scores = self.attention_scores.mean(dim=-1)
+                    topk_indices = attn_scores.topk(
+                        int(self.top_k * attn_scores.size(1)), dim=1, largest=True
+                    ).indices
+                    if topk_indices.max() >= x.size(1):
+                        raise ValueError("topk_indices contains out of bounds index")
+    
+                    bs = x.size(0)
+                    batch_indices = (
+                        torch.arange(bs)
+                        .unsqueeze(-1)
+                        .expand(-1, topk_indices.size(1))
+                        .to(x.device)
+                    )
+    
+                    informative_tokens = x[batch_indices, topk_indices]
+    
+                    non_informative_indices = torch.ones_like(attn_scores, dtype=bool)
+                    non_informative_indices[batch_indices, topk_indices] = False
+                    non_informative_tokens = x[non_informative_indices].view(
+                        bs, -1, x.size(-1)
+                    )
+                    x = informative_tokens
+                    # if non_informative_tokens.size(1) > 0:
+                    #     non_informative_scores = attn_scores[non_informative_indices].view(
+                    #         bs, -1
+                    #     )
+                    #     weighted_sum = (
+                    #         non_informative_tokens * non_informative_scores.unsqueeze(-1)
+                    #     ).sum(dim=1)
+                    #     sum_scores = non_informative_scores.sum(dim=1).unsqueeze(-1)
+                    #     # sum_scores = non_informative_scores.sum(dim=1).unsqueeze(-1)
+                    #     sum_scores = torch.clamp(sum_scores, min=1e-5)  # Clamping to avoid zero values
+
+                    #     package_token = weighted_sum / (sum_scores+1e-5)
+                    #     x = torch.cat(
+                    #         [informative_tokens, package_token.unsqueeze(1)], dim=1
+                    #     )
+                    # else:
+                    #     x = informative_tokens
+
+        features = x.mean(dim=1)
+        gaze_dir = F.relu(self.fc1(features))
+        gaze_dir = F.relu(self.fc2(gaze_dir))
+        gaze_dir = F.relu(self.fc3(gaze_dir))
+        gaze_dir = self.fc4(gaze_dir)
+
+        return gaze_dir
+    
+    def forward_timer(self, x, starters=None, enders=None, img_idx=0):
+        # self.register_hooks()
+
+        if starters is None or enders is None:
+            raise ValueError("starters and enders must be provided for timing")
+
+        starters[0].record()  # Start timing for patch embedding
+        x = self.backbone.patch_embed(x)
+        if self.backbone.pos_embed.shape[1] == 197 and x.shape[1] == 196:
+            pos_embed = self.backbone.pos_embed[:, 1:, :] 
+        else:
+            pos_embed = self.backbone.pos_embed
+        x = self.backbone.pos_drop(x + pos_embed)
+        enders[0].record()  # End timing for patch embedding
+
+        for i, block in enumerate(self.transformer_layers):
+            starters[i+1].record()  # Start timing for this transformer block
+            x = block(x)
+            if i % 2 == 1 and self.score_method == "attention":
+                attn_scores = self.attention_scores.mean(dim=-1)
+                topk_indices = attn_scores.topk(
+                    int(self.top_k * attn_scores.size(1)), dim=1, largest=True
+                ).indices
+                if topk_indices.max() >= x.size(1):
+                    raise ValueError("topk_indices contains out of bounds index")
+
+                bs = x.size(0)
+                batch_indices = (
+                    torch.arange(bs)
+                    .unsqueeze(-1)
+                    .expand(-1, topk_indices.size(1))
+                    .to(x.device)
+                )
+
+                informative_tokens = x[batch_indices, topk_indices]
+
+                non_informative_indices = torch.ones_like(attn_scores, dtype=bool)
+                non_informative_indices[batch_indices, topk_indices] = False
+                non_informative_tokens = x[non_informative_indices].view(
+                    bs, -1, x.size(-1)
+                )
+                x = informative_tokens
+                
+                features = x.mean(dim=1)
+                gaze_dir = F.relu(self.fc1(features))
+                gaze_dir = F.relu(self.fc2(gaze_dir))
+                gaze_dir = F.relu(self.fc3(gaze_dir))
+                gaze_dir = self.fc4(gaze_dir)
+                # update the gaze prediction buffer   
+                local_predictions_buffer[img_idx] = gaze_dir.cpu().numpy()[0]  
+                local_fovealnet_level_buffer[img_idx] = ((i+1) // 2) + 1
+            enders[i+1].record()  # End timing for this transformer block
+            if i % 2 == 1 and self.score_method == "attention":
+                print(f"Write gaze prediction to buffer: {local_predictions_buffer[img_idx]} at level {local_fovealnet_level_buffer[img_idx]} for eye image idx {img_idx}")
+                win1.Lock(0)
+                win1.Put(local_predictions_buffer, 0)
+                win1.Unlock(0)
+
+                win2.Lock(0)
+                win2.Put(local_fovealnet_level_buffer, 0)
+                win2.Unlock(0)
+
+        starters[len(self.transformer_layers)+1].record()  # Start timing for final layers
+        features = x.mean(dim=1)
+        gaze_dir = F.relu(self.fc1(features))
+        gaze_dir = F.relu(self.fc2(gaze_dir))
+        gaze_dir = F.relu(self.fc3(gaze_dir))
+        gaze_dir = self.fc4(gaze_dir)
+        enders[len(self.transformer_layers)+1].record()  # End timing for final layers
+
+        return gaze_dir
+        
+
+
 
 
 if rank == 0:  # Gaussian Splatting process
+
+    # set a prefix ("[3DGS]") for all print()
+    # print = lambda x: print("[3DGS]", x)
+    # Replace the lambda definition with this
+    print = lambda *args, **kwargs: __builtins__.print("[3DGS]", *args, **kwargs)
 
     device = torch.device("cuda")
     props = torch.cuda.get_device_properties(device)
@@ -689,11 +651,18 @@ if rank == 0:  # Gaussian Splatting process
     starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
 
     # record 4 fov steps separately
-    starter0, ender0 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    starter1, ender1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    starter2, ender2 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    starter3, ender3 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    starter4, ender4 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    # starter0, ender0 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    # starter1, ender1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    # starter2, ender2 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    # starter3, ender3 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    # starter4, ender4 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+
+    mystarters = []
+    myenders = []
+    for imgidx in range(50):
+        for stepidx in range(5):
+            mystarters.append(torch.cuda.Event(enable_timing=True))
+            myenders.append(torch.cuda.Event(enable_timing=True))
 
     torch.cuda.synchronize()
 
@@ -703,14 +672,18 @@ if rank == 0:  # Gaussian Splatting process
         comm.Barrier()
         
 
-        # timeall = 0
+        timeall = 0
         # time0 = 0
         # time1 = 0
         # time2 = 0
         # time3 = 0
         # time4 = 0
+
+        
+        steps_performed = [0] * 250
         rendering = render_mpi(view, gaussians, pipeline, background,starter = starter, ender= ender, 
-                               starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
+                               starters = mystarters, enders = myenders, steps_performed=steps_performed,
+                               gaze_r2=args.gaze_r2, gaze_r3=args.gaze_r3, gaze_r4=args.gaze_r4,
                                test_no_render_laststep=args.test_no_render_laststep
                                )["render"]
             
@@ -726,7 +699,7 @@ if rank == 0:  # Gaussian Splatting process
             # print(f"Received fovealnet level: {local_fovealnet_level_buffer[local_fovealnet_level_buffer != 0]}")
             # win2.Unlock(1)
         torch.cuda.synchronize()
-        # timeall += starter.elapsed_time(ender)
+        timeall += starter.elapsed_time(ender)
         # time0 += starter0.elapsed_time(ender0)
         # time1 += starter1.elapsed_time(ender1)
         # time2 += starter2.elapsed_time(ender2)
@@ -739,10 +712,18 @@ if rank == 0:  # Gaussian Splatting process
         # print(f"Rendering time for view {idx} step 3: {time3:.2f} ms")
         # print(f"Rendering time for view {idx} step 4: {time4:.2f} ms")
         
+        print(f"Total Rendering time for view {idx}: {timeall:.2f} ms")
+        for imgidx in range(50):
+            for stepidx in range(5):
+                if steps_performed[stepidx + imgidx*5] == 1:
+                    print(f"Rendering time for view {idx} step {stepidx} for eye image {imgidx}: {mystarters[stepidx + imgidx*5].elapsed_time(myenders[stepidx + imgidx*5]):.2f} ms")
+        
 
 
 
 else:  # FovealNet process
+
+    print = lambda *args, **kwargs: __builtins__.print("[fovealnet]", *args, **kwargs)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     props = torch.cuda.get_device_properties(device)
@@ -800,7 +781,7 @@ else:  # FovealNet process
                     start_time.record()
                     
                     if args.foveal_layer_timer:
-                        output = model.forward_timer(image, starters, enders)
+                        output = model.forward_timer(image, starters, enders, img_idx=img_idx)
                     else:
                         output = model(image)
                     
@@ -813,7 +794,16 @@ else:  # FovealNet process
                     if args.foveal_layer_timer:
                         for i in range(len(layer_times)):
                             layer_times[i] += starters[i].elapsed_time(enders[i])
-        
+
+                print(f"foveal net time for image idx {img_idx}: {elapsed_time:.2f} ms")
+                print("By layer:")
+                for i in range(len(layer_times)):
+                    if i==0:
+                        print(f"Layer {i} (embedding): {starters[i].elapsed_time(enders[i]):.2f} ms")
+                    elif i==len(layer_times)-1:
+                        print(f"Layer {i} (final layer): {starters[i].elapsed_time(enders[i]):.2f} ms")
+                    else:
+                        print(f"Layer {i} (transformer block): {starters[i].elapsed_time(enders[i]):.2f} ms")
                 prediction = output.cpu().numpy()[0]
                 local_predictions_buffer[img_idx] = prediction  
                 local_fovealnet_level_buffer[img_idx] = 4
@@ -825,6 +815,7 @@ else:  # FovealNet process
                 # win.Put(prediction, 0)
                 # print(f"Write prediction to shared memory: {prediction}")
                 # win.Unlock(0)
+                print(f"Write gaze prediction to buffer: {local_predictions_buffer[img_idx]} at level {local_fovealnet_level_buffer[img_idx]}")
 
                 win1.Lock(0)
                 win1.Put(local_predictions_buffer, 0)
@@ -853,21 +844,6 @@ else:  # FovealNet process
             for image_name, prediction in predictions:
                 f.write(f"{image_name}: Pitch={prediction[0]:.4f}, Yaw={prediction[1]:.4f}\n")
 
-
-        average_time = total_time / num_images
-        print(f"Average inference time: {average_time:.2f} ms")
-
-        if args.foveal_layer_timer:
-            print("\nLayer-wise timing:")
-            print(f"Patch embedding time: {layer_times[0]/num_images:.2f} ms")
-            for i, time in enumerate(layer_times[1:-1], 1):
-                print(f"Transformer block {i} time: {time/num_images:.2f} ms")
-            print(f"Final layers time: {layer_times[-1]/num_images:.2f} ms")
-
-        # Write predictions to output file
-        with open(args.foveal_output_file, 'w') as f:
-            for image_name, prediction in predictions:
-                f.write(f"{image_name}: Pitch={prediction[0]:.4f}, Yaw={prediction[1]:.4f}\n")
 
         print(f"Predictions saved to {args.foveal_output_file}")
 

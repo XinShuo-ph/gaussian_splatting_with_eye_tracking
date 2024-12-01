@@ -19,3 +19,5 @@ fovealnet/results*
 fovealnet/predictions.txt
 predictions.txt
 predictions_*.txt
+parallel_track_render_timertest.py
+parallel_track_render.py
