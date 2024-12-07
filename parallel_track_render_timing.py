@@ -6,6 +6,7 @@ import os
 from tqdm import tqdm
 from os import makedirs
 import time
+import json
 # from gaussian_renderer_amr import render_mpi, GaussianModel
 
 import math
@@ -38,6 +39,12 @@ def load_image(image_path):
 pix_x = 1920
 pix_y = 1080
 
+
+# Define number of images and steps
+num_images = 50  # Adjust based on your data
+max_steps = 5  # Number of fovea steps
+
+
 parser = ArgumentParser(description="Testing script parameters")
 model = ModelParams(parser, sentinel=True)
 pipeline = PipelineParams(parser)
@@ -61,6 +68,7 @@ parser.add_argument("--angle_to_pix_radius", default=600.0, type=float) # a fact
 parser.add_argument("--gaze_r2", default=600, type=float)
 parser.add_argument("--gaze_r3", default=400, type=float)
 parser.add_argument("--gaze_r4", default=200, type=float)
+parser.add_argument("--no_competing_device", action="store_true") # do not let the 3DGS and fovealnet process to compete for the GPU resource
 args = get_combined_args(parser)
 
 
@@ -78,15 +86,18 @@ rank = comm.Get_rank()
 sync_gaze_prediction = np.zeros(2, dtype=np.float32)
 win = MPI.Win.Create(sync_gaze_prediction, comm=comm)
 
-gaze_predictions_buffer = np.zeros((150, 2), dtype=np.float32) # at most 150 gaze for each head position
-fovealnet_level_buffer = np.zeros(150, dtype=np.int32)
+gaze_predictions_buffer = np.zeros((150, 2), dtype=np.float32) # at most 150 gaze for each head position (50 in the test set) 
+fovealnet_level_buffer = np.zeros(150, dtype=np.int32) # the level of fovealnet inference for each eye image (gaze)
+GS_level_buffer = np.zeros(150, dtype=np.int32) # the level of 3DGS rendering for each eye image (gaze)
 
 
 local_predictions_buffer = np.zeros((150, 2), dtype=np.float32) 
 local_fovealnet_level_buffer = np.zeros(150, dtype=np.int32)
+local_GS_level_buffer = np.zeros(150, dtype=np.int32)
 
 win1 = MPI.Win.Create(gaze_predictions_buffer, comm=comm)
 win2 = MPI.Win.Create(fovealnet_level_buffer, comm=comm)
+win3 = MPI.Win.Create(GS_level_buffer, comm=comm)
 
 
 
@@ -233,8 +244,6 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
         raster_settings,
     )
         
-
-    
     if enders is not None:
         enders[0].record()
 
@@ -245,6 +254,13 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
         print("Total pixels: ", redmask.size) 
         torchvision.utils.save_image(rendered_image0, "tmp0.png")
 
+    if args.no_competing_device:
+        local_GS_level_buffer[0] = 0
+        win3.Lock(0)
+        win3.Put(local_GS_level_buffer, 0)
+        win3.Unlock(0)
+
+    
 
 
     foveaStep = 1
@@ -308,6 +324,12 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
         torchvision.utils.save_image(rendered_image1, "tmp1.png")
     out_color_precomp = out_color_precomp + rendered_image1
 
+    if args.no_competing_device:
+        local_GS_level_buffer[0] = 1
+        win3.Lock(0)
+        win3.Put(local_GS_level_buffer, 0)
+        win3.Unlock(0)
+        print(f"write GS level buffer for eye image idx 0: {local_GS_level_buffer[0]}")
 
     # co-design with fovealnet
     for img_idx in range(50):
@@ -326,8 +348,8 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
             win2.Unlock(1)
 
             if foveaStep == local_fovealnet_level_buffer[img_idx]:
-                # wait for the other rank 1 process to uupdate the gaze prediction intermediate step
-                time.sleep(0.002)
+                # wait for the other rank 1 process to update the gaze prediction intermediate step
+                time.sleep(0.005)
                 continue
 
             foveaStep = local_fovealnet_level_buffer[img_idx]
@@ -378,6 +400,11 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
             out_color_precomp = out_color_precomp + rendered_image0
             if enders is not None:
                 enders[foveaStep + img_idx*5].record()
+            if args.no_competing_device:
+                local_GS_level_buffer[img_idx] = foveaStep
+                win3.Lock(0)
+                win3.Put(local_GS_level_buffer, 0)
+                win3.Unlock(0)
 
     if ender is not None:
         ender.record()
@@ -555,6 +582,18 @@ class VisionTransformer(nn.Module):
         enders[0].record()  # End timing for patch embedding
 
         for i, block in enumerate(self.transformer_layers):
+            # if no_competing_device, wait while the 3DGS process updates the foveal level
+            if args.no_competing_device and i%2==0: # wait only at i=0,2,4 layer
+                win3.Lock(1)
+                local_GS_level_buffer = np.array(GS_level_buffer)
+                win3.Unlock(1)
+                print(f"received GS level buffer for eye image idx {img_idx}: {local_GS_level_buffer[img_idx]}")
+                while local_GS_level_buffer[img_idx] <= (i // 2):
+                    time.sleep(0.005)
+                    win3.Lock(1)
+                    local_GS_level_buffer = np.array(GS_level_buffer)
+                    win3.Unlock(1)
+                    print(f"received GS level buffer for eye image idx {img_idx}: {local_GS_level_buffer[img_idx]}")
             starters[i+1].record()  # Start timing for this transformer block
             x = block(x)
             if i % 2 == 1 and self.score_method == "attention":
@@ -616,6 +655,9 @@ class VisionTransformer(nn.Module):
 
 
 if rank == 0:  # Gaussian Splatting process
+    # Initialize lists to store timing data
+    total_times = []
+    image_step_times = []
 
     # set a prefix ("[3DGS]") for all print()
     # print = lambda x: print("[3DGS]", x)
@@ -681,6 +723,8 @@ if rank == 0:  # Gaussian Splatting process
 
         
         steps_performed = [0] * 250
+        GS_level_buffer = np.zeros(150, dtype=np.int32)
+        local_GS_level_buffer = np.zeros(150, dtype=np.int32)
         rendering = render_mpi(view, gaussians, pipeline, background,starter = starter, ender= ender, 
                                starters = mystarters, enders = myenders, steps_performed=steps_performed,
                                gaze_r2=args.gaze_r2, gaze_r3=args.gaze_r3, gaze_r4=args.gaze_r4,
@@ -700,6 +744,7 @@ if rank == 0:  # Gaussian Splatting process
             # win2.Unlock(1)
         torch.cuda.synchronize()
         timeall += starter.elapsed_time(ender)
+        total_times.append(timeall)
         # time0 += starter0.elapsed_time(ender0)
         # time1 += starter1.elapsed_time(ender1)
         # time2 += starter2.elapsed_time(ender2)
@@ -711,15 +756,30 @@ if rank == 0:  # Gaussian Splatting process
         # print(f"Rendering time for view {idx} step 2: {time2:.2f} ms")
         # print(f"Rendering time for view {idx} step 3: {time3:.2f} ms")
         # print(f"Rendering time for view {idx} step 4: {time4:.2f} ms")
-        
         print(f"Total Rendering time for view {idx}: {timeall:.2f} ms")
-        for imgidx in range(50):
-            for stepidx in range(5):
-                if steps_performed[stepidx + imgidx*5] == 1:
-                    print(f"Rendering time for view {idx} step {stepidx} for eye image {imgidx}: {mystarters[stepidx + imgidx*5].elapsed_time(myenders[stepidx + imgidx*5]):.2f} ms")
-        
 
 
+        # Collect step times for each image
+        view_image_step_times = []
+        for img_idx in range(num_images):
+            img_step_times = []
+            for step_idx in range(max_steps):
+                idx_flat = step_idx + img_idx * max_steps
+                if steps_performed[idx_flat] == 1:
+                    step_time = mystarters[idx_flat].elapsed_time(myenders[idx_flat])
+                    img_step_times.append(step_time)
+                    print(f"Rendering time for view {idx}, step {step_idx} for eye image {img_idx}: {step_time:.2f} ms")
+                else:
+                    img_step_times.append(0.0)  # If step wasn't performed, record 0
+            view_image_step_times.append(img_step_times)
+        image_step_times.append(view_image_step_times)
+    
+    # Save timing data to a file
+    with open('timing_data.json', 'w') as f:
+        json.dump({
+            'total_times': total_times,
+            'image_step_times': image_step_times
+        }, f)
 
 else:  # FovealNet process
 
@@ -734,6 +794,10 @@ else:  # FovealNet process
     model = VisionTransformer(num_layers=6, top_k=1.0).to(device)
     model.load_state_dict(torch.load(args.foveal_model_path, map_location=device))
     model.eval()
+    
+    # Initialize lists to store timing data
+    inference_times = []
+    layer_timings_per_image = []
 
     # if args.eye_image_sequence_id_start is not None and args.eye_image_sequence_id_end is not None:
     
@@ -759,7 +823,7 @@ else:  # FovealNet process
 
         # Process images and make predictions
         predictions = []
-        total_time = 0
+        total_sequence_time = 0
         num_images = 0
         layer_times = [0] * (len(model.transformer_layers) + 2) if args.foveal_layer_timer else None
 
@@ -788,12 +852,19 @@ else:  # FovealNet process
                     end_time.record()
                     torch.cuda.synchronize()
                     elapsed_time = start_time.elapsed_time(end_time)
-                    total_time += elapsed_time
+                    total_sequence_time += elapsed_time
                     num_images += 1
+                    inference_times.append(elapsed_time)
 
                     if args.foveal_layer_timer:
-                        for i in range(len(layer_times)):
-                            layer_times[i] += starters[i].elapsed_time(enders[i])
+                        # Record layer timings for this image
+                        layer_timings = []
+                        for i in range(num_events):
+                            layer_time = starters[i].elapsed_time(enders[i])
+                            layer_times[i] += layer_time
+                            layer_timings.append(layer_time)
+                        layer_timings_per_image.append(layer_timings)
+
 
                 print(f"foveal net time for image idx {img_idx}: {elapsed_time:.2f} ms")
                 print("By layer:")
@@ -828,7 +899,7 @@ else:  # FovealNet process
 
                 predictions.append((image_name, prediction))
 
-        average_time = total_time / num_images
+        average_time = total_sequence_time / num_images
         print(f"Average inference time for sequence {seq_id}: {average_time:.2f} ms")
 
         if args.foveal_layer_timer:
@@ -845,7 +916,11 @@ else:  # FovealNet process
                 f.write(f"{image_name}: Pitch={prediction[0]:.4f}, Yaw={prediction[1]:.4f}\n")
 
 
-        print(f"Predictions saved to {args.foveal_output_file}")
+    with open('fovealnet_timing_data.json', 'w') as f:
+        json.dump({
+            'inference_times': inference_times,
+            'layer_timings_per_image': layer_timings_per_image
+        }, f)
 
 
 # Clean up
