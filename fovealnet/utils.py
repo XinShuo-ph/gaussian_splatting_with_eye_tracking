@@ -211,6 +211,7 @@ def train_model(
     num_epochs=50,
     batch_size=256,
     patience=50,  # Number of epochs to wait for improvement
+    foveated=False
 ):
     print(device)
     model.to(device)
@@ -238,9 +239,14 @@ def train_model(
             gaze_gt_vecs = gaze_gt_vecs.to(device)
 
             optimizer.zero_grad()
-            output = model(images)
-
-            loss = criterion(output, gaze_gt_vecs)
+            if foveated:
+                outputs = model(images)
+                loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
+                    0.5 * criterion(outputs[1], gaze_gt_vecs) + 
+                    criterion(outputs[2], gaze_gt_vecs) )
+            else:
+                output = model(images)
+                loss = criterion(output, gaze_gt_vecs)
 
             loss.backward()
             optimizer.step()
@@ -287,8 +293,16 @@ def train_model(
                 images = images.to(device)
                 gaze_gt_vecs = gaze_gt_vecs.to(device)
 
-                output = model(images)
-                loss = criterion(output, gaze_gt_vecs)
+                if foveated:
+                    outputs = model(images)
+                    loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
+                        0.5 * criterion(outputs[1], gaze_gt_vecs) + 
+                        criterion(outputs[2], gaze_gt_vecs) )
+                else:
+                    output = model(images)
+                    loss = criterion(output, gaze_gt_vecs)
+                # output = model(images)
+                # loss = criterion(output, gaze_gt_vecs)
 
                 val_loss += loss.item()
 

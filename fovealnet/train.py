@@ -4,7 +4,7 @@ from utils import EdsDataset, train_model, AllEdsDataset
 from torch.optim.lr_scheduler import StepLR
 from sklearn.model_selection import train_test_split
 # from vit_model import VisionTransformer
-from timm_vit import VisionTransformer
+from timm_vit import VisionTransformer, VisionTransformerFoveated
 import argparse
 import os
 from datetime import datetime
@@ -211,6 +211,7 @@ def parse_args():
         "--patience", type=int, default=15, help="Early stopping patience"
     )
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
+    parser.add_argument("--train_foveated", action="store_true", help="Train with foveated images")
 
     return parser.parse_args()
 
@@ -283,7 +284,10 @@ def main():
         ),
     }
 
-    model = VisionTransformer(num_layers = 6, top_k = 1.0).to(device)
+    if args.train_foveated:
+        model = VisionTransformerFoveated(num_layers = 6, top_k = 1.0).to(device)
+    else:
+        model = VisionTransformer(num_layers = 6, top_k = 1.0).to(device)
 
     criterion = nn.L1Loss()
 
@@ -303,6 +307,7 @@ def main():
         output_path=output_path,
         num_epochs=args.num_epochs,
         scheduler=scheduler,
+        foveated=args.train_foveated
     )
 
 

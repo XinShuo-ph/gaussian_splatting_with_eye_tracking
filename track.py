@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference for gaze estimation model.")
-    parser.add_argument("--foveal_model_path", default="/home/ubuntu/gaussian-splatting/fovealnet/results_20241022/model_minmax_0.8.pt", type=str, help="Path to the trained model")
+    parser.add_argument("--foveal_model_path", default="/home/ubuntu/gaussian_splatting_with_eye_tracking/fovealnet/results_20241022/model_minmax_0.8.pt", type=str, help="Path to the trained model")
     parser.add_argument("--eye_image_folder", default="/home/ubuntu/openeds/test/sequences/0000/", type=str, help="Folder containing input images")
     parser.add_argument("--eye_image_sequence_folder", default="/home/ubuntu/openeds/test/sequences/", type=str, help="Folder containing input image sequences")
     parser.add_argument("--eye_image_sequence_id_start", default=None, type=int, help="Start of the image sequence ID range")
@@ -29,7 +29,8 @@ def load_image(image_path):
     return transform(image).unsqueeze(0)
 
 args = parse_args()
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 
 # Load the trained model
 model = VisionTransformer(num_layers=6, top_k=1.0).to(device)
