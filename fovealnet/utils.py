@@ -227,6 +227,9 @@ def train_model(
 
         model.train()
         running_loss = 0.0
+        running_loss_0 = 0.0
+        running_loss_1 = 0.0
+        running_loss_2 = 0.0
         max_error = 0.0
         vertical_loss = 0.0
         horizon_loss = 0.0
@@ -241,9 +244,11 @@ def train_model(
             optimizer.zero_grad()
             if foveated:
                 outputs = model(images)
+                print(f"outputs shape: {outputs.shape}")
                 loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
                     0.5 * criterion(outputs[1], gaze_gt_vecs) + 
                     criterion(outputs[2], gaze_gt_vecs) )
+                output = outputs[2]
             else:
                 output = model(images)
                 loss = criterion(output, gaze_gt_vecs)
@@ -251,6 +256,11 @@ def train_model(
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+
+            if foveated:
+                running_loss_0 += criterion(outputs[0], gaze_gt_vecs).item()
+                running_loss_1 += criterion(outputs[1], gaze_gt_vecs).item()
+                running_loss_2 += criterion(outputs[2], gaze_gt_vecs).item()
 
             abs_error = torch.abs(output - gaze_gt_vecs)
             batch_max_error = torch.max(abs_error).item()
@@ -268,6 +278,15 @@ def train_model(
         scheduler.step()
 
         epoch_loss = running_loss / len(dataloaders["train"])
+        if foveated:
+            epoch_loss_0 = running_loss_0 / len(dataloaders["train"])
+            epoch_loss_1 = running_loss_1 / len(dataloaders["train"])
+            epoch_loss_2 = running_loss_2 / len(dataloaders["train"])
+
+            print(f"outputs shape: {outputs.shape}")
+            print(f"Epoch [{epoch + 1}/{num_epochs}], foveated early prediction 0 loss: {epoch_loss_0:.4f}")
+            print(f"Epoch [{epoch + 1}/{num_epochs}], foveated early prediction 1 loss: {epoch_loss_1:.4f}")
+            print(f"Epoch [{epoch + 1}/{num_epochs}], foveated final prediction loss: {epoch_loss_2:.4f}")
         vertical_loss /= len(dataloaders["train"])
         horizon_loss /= len(dataloaders["train"])
 
@@ -298,6 +317,7 @@ def train_model(
                     loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
                         0.5 * criterion(outputs[1], gaze_gt_vecs) + 
                         criterion(outputs[2], gaze_gt_vecs) )
+                    output = outputs[2]
                 else:
                     output = model(images)
                     loss = criterion(output, gaze_gt_vecs)
