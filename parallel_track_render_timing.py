@@ -824,7 +824,7 @@ elif rank==1:  # FovealNet process
         default_threads = torch.get_num_threads()
         print(f"Default inter-op threads: {default_interop}")
         print(f"Default intra-op threads: {default_threads}")
-        torch.set_num_threads(4)
+        torch.set_num_threads(3)
         torch.set_num_interop_threads(1) 
     
     model = VisionTransformer(num_layers=6, top_k=1.0).to(device)

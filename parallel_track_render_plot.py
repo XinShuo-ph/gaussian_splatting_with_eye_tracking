@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--first_image_separate', action='store_true', help='If the timing of the first image is saved separately')
+parser.add_argument('--two_timing', action='store_true', help='the experiment2 where we I use parallel_track_render_timing.py for measuring latency of first render and parallel_load_balance.py for measuring latency of gaze updates')
+
 args = parser.parse_args()
 
 # Load timing data from JSON file
@@ -27,6 +29,22 @@ image_step_times = np.array(image_step_times)  # Shape: (num_views, num_images, 
 # Separate the first eye image and the other 49 images
 first_image_times = image_step_times[:, 0, :]  # Shape: (num_views, max_steps)
 other_images_times = image_step_times[:, 1:, :]  # Shape: (num_views, num_images - 1, max_steps)
+
+if args.two_timing: # revise the first image timing
+    with open('timing_data_cpu_timing.json', 'r') as f:
+        data = json.load(f)
+    total_times = np.array(data['total_times'])  # Shape: (num_views,)
+    image_step_times = data['image_step_times']  # Shape: (num_views, num_images, max_steps)
+
+    num_views = len(total_times)
+    num_images = len(image_step_times[0])
+    max_steps = len(image_step_times[0][0])
+
+    # Convert image_step_times to numpy array for easier processing
+    image_step_times = np.array(image_step_times)  # Shape: (num_views, num_images, max_steps)
+
+    # Separate the first eye image and the other 49 images
+    first_image_times = image_step_times[:, 0, :]  # Shape: (num_views, max_steps)
 
 # Calculate average per step for the first eye image over num_views
 avg_step_times_first_image = np.mean(first_image_times, axis=0)  # Shape: (max_steps,)
@@ -134,6 +152,28 @@ else:
 
     layer_times_first_image = layer_timings_per_image[:, 0, :]  # Shape: (num_sequences, num_layers)
     layer_times_other_images = layer_timings_per_image[:, 1:, :]  # Shape: (num_sequences, num_images_per_sequence - 1, num_layers)
+
+if args.two_timing: # revise the first image timing
+    with open('fovealnet_timing_data_cpu_timing.json', 'r') as f:
+        data = json.load(f)
+    inference_times = np.array(data['inference_times'])  # Shape: (num_sequences * num_images,)
+    layer_timings_per_image = np.array(data['layer_timings_per_image'])  # Shape: (num_sequences * num_images, num_layers)
+
+    # Since images are processed sequentially, we can reshape the arrays based on the number of images per sequence
+    num_images_per_sequence = 50  # Assuming each sequence has 50 images (1 first image + 49 updates)
+    num_layers = layer_timings_per_image.shape[1]
+
+    # Reshape arrays to (num_sequences, num_images_per_sequence, ...)
+    num_sequences = inference_times.shape[0] // num_images_per_sequence
+    inference_times = inference_times.reshape(num_sequences, num_images_per_sequence)
+    layer_timings_per_image = layer_timings_per_image.reshape(num_sequences, num_images_per_sequence, num_layers)
+
+    # Separate the first eye image and the other 49 images
+    inference_times_first_image = inference_times[:, 0]  # Shape: (num_sequences,)
+    # inference_times_other_images = inference_times[:, 1:]  # Shape: (num_sequences, num_images_per_sequence - 1)
+
+    layer_times_first_image = layer_timings_per_image[:, 0, :]  # Shape: (num_sequences, num_layers)
+    # layer_times_other_images = layer_timings_per_image[:, 1:, :]  # Shape: (num_sequences, num_images_per_sequence - 1, num_layers)
 
 # Calculate average inference time for the first eye image over all sequences
 avg_inference_time_first_image = np.mean(inference_times_first_image)
