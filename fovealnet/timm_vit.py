@@ -211,7 +211,7 @@ class VisionTransformerFoveated(nn.Module):
         prune_step=0.05,
         score_method="attention",
     ):
-        super(VisionTransformer, self).__init__()
+        super(VisionTransformerFoveated, self).__init__()
 
         self.backbone = timm.create_model("vit_small_patch16_224", pretrained=True)
 
@@ -281,6 +281,8 @@ class VisionTransformerFoveated(nn.Module):
             pos_embed = self.backbone.pos_embed
     
         x = self.backbone.pos_drop(x + pos_embed)
+        # create a tensor of shape (transformer_layers//2 , 2)
+        # outputs = torch.zeros((self.num_layers//2, 2))
         outputs = []
         for i, block in enumerate(self.transformer_layers):
             # print(block)
@@ -316,6 +318,7 @@ class VisionTransformerFoveated(nn.Module):
                     gaze_dir = F.relu(self.fc3(gaze_dir))
                     gaze_dir = self.fc4(gaze_dir)
                     # append a deep copy of the gaze_dir tensor to python list outputs
+                    # outputs[i//2,:] = gaze_dir.clone()
                     outputs.append(gaze_dir.clone())
 
                     # if non_informative_tokens.size(1) > 0:
@@ -341,7 +344,9 @@ class VisionTransformerFoveated(nn.Module):
         # gaze_dir = F.relu(self.fc2(gaze_dir))
         # gaze_dir = F.relu(self.fc3(gaze_dir))
         # gaze_dir = self.fc4(gaze_dir)
-
+        
+        # make the python list outputs a tensor
+        outputs = torch.stack(outputs)
         return outputs
     
     def forward_timer(self, x, starters=None, enders=None):
