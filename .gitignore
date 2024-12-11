@@ -21,3 +21,4 @@ predictions.txt
 predictions_*.txt
 parallel_track_render_timertest.py
 parallel_track_render.py
+parallel_test.py

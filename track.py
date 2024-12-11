@@ -17,6 +17,7 @@ def parse_args():
     parser.add_argument("--eye_image_sequence_id_end", default=None, type=int, help="End of the image sequence ID range")
     parser.add_argument("--foveal_output_file", type=str, default="predictions.txt", help="Output file for predictions")
     parser.add_argument("--foveal_layer_timer", action="store_true", help="Enable layer-wise timing")
+    parser.add_argument("--cpuinfer", action="store_true", help="Use CPU instead of GPU")
     return parser.parse_args()
 
 def load_image(image_path):
@@ -29,8 +30,8 @@ def load_image(image_path):
     return transform(image).unsqueeze(0)
 
 args = parse_args()
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
+device = torch.device("cuda" if (torch.cuda.is_available() and not args.cpuinfer ) else "cpu")
+# device = torch.device("cpu")
 
 # Load the trained model
 model = VisionTransformer(num_layers=6, top_k=1.0).to(device)

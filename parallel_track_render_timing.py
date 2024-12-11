@@ -57,6 +57,7 @@ parser.add_argument("--eye_image_sequence_id_start", default=None, type=int)
 parser.add_argument("--eye_image_sequence_id_end", default=None, type=int)
 parser.add_argument("--foveal_output_file", type=str, default="predictions.txt")
 parser.add_argument("--foveal_layer_timer", action="store_true")
+parser.add_argument("--foveal_cpu", action="store_true", help="Run FovealNet on CPU")
 
 parser.add_argument("--iteration", default=-1, type=int)
 parser.add_argument("--show_fps", action="store_true")
@@ -328,8 +329,8 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
         local_GS_level_buffer[0] = 1
         win3.Lock(0)
         win3.Put(local_GS_level_buffer, 0)
-        win3.Unlock(0)
         print(f"write GS level buffer for eye image idx 0: {local_GS_level_buffer[0]}")
+        win3.Unlock(0)
 
     # co-design with fovealnet
     for img_idx in range(50):
@@ -591,9 +592,11 @@ class VisionTransformer(nn.Module):
                 while local_GS_level_buffer[img_idx] <= (i // 2):
                     time.sleep(0.005)
                     win3.Lock(1)
-                    local_GS_level_buffer = np.array(GS_level_buffer)
+                    if local_GS_level_buffer[img_idx] != GS_level_buffer[img_idx]:
+                        local_GS_level_buffer = np.array(GS_level_buffer)
+                        print(f"received GS level buffer for eye image idx {img_idx}: {local_GS_level_buffer[img_idx]}")
                     win3.Unlock(1)
-                    print(f"received GS level buffer for eye image idx {img_idx}: {local_GS_level_buffer[img_idx]}")
+            
             starters[i+1].record()  # Start timing for this transformer block
             x = block(x)
             if i % 2 == 1 and self.score_method == "attention":
@@ -781,18 +784,39 @@ if rank == 0:  # Gaussian Splatting process
             'image_step_times': image_step_times
         }, f)
 
-else:  # FovealNet process
+elif rank==1:  # FovealNet process
 
     print = lambda *args, **kwargs: __builtins__.print("[fovealnet]", *args, **kwargs)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    props = torch.cuda.get_device_properties(device)
-    num_sms = props.multi_processor_count
-    print(f"FovealNet process is using {num_sms} stream multiprocessors.")
-
-
+    device = torch.device("cuda" if (torch.cuda.is_available() and not args.foveal_cpu ) else "cpu")
+    if not args.foveal_cpu:
+        props = torch.cuda.get_device_properties(device)
+        num_sms = props.multi_processor_count
+        print(f"FovealNet process is using {num_sms} stream multiprocessors.")
+    else:
+        default_interop = torch.get_num_interop_threads()
+        default_threads = torch.get_num_threads()
+        print(f"Default inter-op threads: {default_interop}")
+        print(f"Default intra-op threads: {default_threads}")
+        torch.set_num_threads(4)
+        torch.set_num_interop_threads(1) 
+    
     model = VisionTransformer(num_layers=6, top_k=1.0).to(device)
     model.load_state_dict(torch.load(args.foveal_model_path, map_location=device))
+
+    
+    # if device.type == 'cpu':
+    #     # Enable TensorCore operations if available
+    #     torch.set_float32_matmul_precision('high')
+        
+    #     # Try enabling MKL settings if you're using PyTorch with MKL
+    #     import os
+    #     os.environ['MKL_NUM_THREADS'] = '4'
+    #     os.environ['OMP_NUM_THREADS'] = '4'
+        
+    #     # Consider using torch.compile() for PyTorch 2.0+
+    #     model = torch.compile(model)
+
     model.eval()
     
     # Initialize lists to store timing data
@@ -807,7 +831,7 @@ else:  # FovealNet process
         # Wait for Gaussian Splatting process to be ready
         print(f"inferencing sequence {seq_id} in FovealNet, comm.Barrier()")
         comm.Barrier()
-        # torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
         
         # Create CUDA events for timing if foveal_layer_timer is enabled
         if args.foveal_layer_timer:
