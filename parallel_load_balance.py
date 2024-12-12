@@ -38,6 +38,21 @@ def load_image(image_path):
     ])
     return transform(image).unsqueeze(0)
 
+def solve_topk(old_topk, timing_3DGS, timing_fovealnet):
+    # solve the topk value for fovealnet until the latency matches the 3DGS, according to:
+    # (1+topk^2 + topk^4) / (1+old_topk^2 + old_topk^4) = timing_3DGS / timing_fovealnet
+    # this is a quadratic equation for topk^2, solve it and get the topk value
+    rhs = timing_3DGS / timing_fovealnet * (1+old_topk**2 + old_topk**4)
+    # solve x^2 + x + 1-rhs = 0
+    delta = 1 - 4*(1-rhs)
+    if delta < 1: # i.e. rhs < 1
+        # this means the latency of fovealnet is just too high that seting topk = 0 is still not enough by simple estimates
+        # just half the topk for a reasonable update
+        return old_topk / 2
+    else:
+        topk_sq = (-1 + np.sqrt(1 - 4*(1-rhs))) / 2
+        return np.sqrt(topk_sq)
+
 pix_x = 1920
 pix_y = 1080
 
@@ -72,6 +87,9 @@ parser.add_argument("--gaze_r2", default=600, type=float)
 parser.add_argument("--gaze_r3", default=400, type=float)
 parser.add_argument("--gaze_r4", default=200, type=float)
 parser.add_argument("--no_competing_device", action="store_true") # do not let the 3DGS and fovealnet process to compete for the GPU resource
+parser.add_argument("--tune_topk", action="store_true") # tune the topk value for fovealnet until the latency matches the 3DGS, if this is true, do not run multiple eye images, run only the first image, measure elapsed time, every 10 iterations, compute average latency and adjust the topk value
+parser.add_argument("--topk_init", default = 0.8, type=float) # initial topk for tuning
+parser.add_argument("--topk_update_iter", default = 10, type=int) # update topk every several (e.g. 10) iterations
 args = get_combined_args(parser)
 
 
@@ -673,6 +691,20 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
                 win3.Put(local_GS_level_buffer, 0)
                 win3.Unlock(0)
     
+    if args.tune_topk: # if we only tune the topk value, we only run the first image 
+        if ender is not None:
+            ender.record()
+        return {"render": out_color_precomp,
+                "viewspace_points": screenspace_points,
+                "visibility_filter" : radii > 0,
+                "radii": radii
+                # "means2D": parsed_means2D,
+                # "conic_opacity": parsed_conic_opacity,
+                # "geom_rgb": parsed_geom_rgb,
+                # "point_list": parsed_point_list,
+                # "ranges": parsed_ranges,
+                # "tile_AMR_levels": parsed_tile_AMR_levels
+                }
     
     # after the first rendering, we use the fovealnet gpu device passed as argument in this function
     # for img_idx in range(1, 50):
@@ -954,6 +986,11 @@ if rank == 0:  # Gaussian Splatting process
 
     torch.cuda.synchronize()
 
+    if args.tune_topk:# open a tmpfile to record the timing, overwrite the file if it exists
+        with open("3DGS_timing_tmp.txt", "w") as f:
+            f.write("")
+        
+
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         print(f"Rendering view {idx} in 3DGS, comm.Barrier()")
         # Wait for FovealNet process to be ready
@@ -1034,6 +1071,8 @@ if rank == 0:  # Gaussian Splatting process
         view_image_step_times = []
         for img_idx in range(num_images):
             img_step_times = []
+            if args.tune_topk and img_idx > 0: # Skip rendering for other images if tuning topk
+                break
             for step_idx in range(max_steps):
                 idx_flat = step_idx + img_idx * max_steps
                 if steps_performed[idx_flat] == 1:
@@ -1043,20 +1082,32 @@ if rank == 0:  # Gaussian Splatting process
                 else:
                     img_step_times.append(0.0)  # If step wasn't performed, record 0
             view_image_step_times.append(img_step_times)
+            if args.tune_topk:
+                # record the sum of img_step_times to the tmpfile
+                with open("3DGS_timing_tmp.txt", "a") as f:
+                    f.write(f"{np.sum(img_step_times)}\n")
         image_step_times.append(view_image_step_times)
     
-    # Save timing data to a file
-    with open('timing_data.json', 'w') as f:
-        json.dump({
-            'total_times': total_times,
-            'image_step_times': image_step_times
-        }, f)
-    
-    with open('fovealnet_timing_data.json', 'w') as f:
-        json.dump({
-            'inference_times': inference_times,
-            'layer_timings_per_image': layer_timings_per_image
-        }, f)
+    if args.tune_topk:
+        # Save timing data to a file
+        with open('timing_data_tune_topk.json', 'w') as f:
+            json.dump({
+                'total_times': total_times,
+                'image_step_times': image_step_times
+            }, f)
+    else:
+        # Save timing data to a file
+        with open('timing_data.json', 'w') as f:
+            json.dump({
+                'total_times': total_times,
+                'image_step_times': image_step_times
+            }, f)
+        
+        with open('fovealnet_timing_data.json', 'w') as f:
+            json.dump({
+                'inference_times': inference_times,
+                'layer_timings_per_image': layer_timings_per_image
+            }, f)
 
 
 
@@ -1077,7 +1128,11 @@ elif rank==1:  # FovealNet process
         torch.set_num_threads(3)
         torch.set_num_interop_threads(1) 
     
-    model = VisionTransformer(num_layers=6, top_k=1.0).to(device)
+    current_topk = 1.0
+    if args.tune_topk:
+        current_topk = args.topk_init
+
+    model = VisionTransformer(num_layers=6, top_k=current_topk).to(device)
     model.load_state_dict(torch.load(args.foveal_model_path, map_location=device))
 
     
@@ -1098,12 +1153,37 @@ elif rank==1:  # FovealNet process
     # Initialize lists to store timing data
     inference_times = []
     layer_timings_per_image = []
+    topk_values = []
 
     # if args.eye_image_sequence_id_start is not None and args.eye_image_sequence_id_end is not None:
     
     # for sceneidx in range(100):
 
     for seq_id in range(args.eye_image_sequence_id_start, args.eye_image_sequence_id_end ):
+
+        # if tune topk, read the 3DGS timing data, and update the topk value
+        # do this before the barrier, this likely ensures the timing data is ready
+        if args.tune_topk and seq_id > args.eye_image_sequence_id_start and (seq_id - args.eye_image_sequence_id_start) % args.topk_update_iter == 0:
+            with open("3DGS_timing_tmp.txt", "r") as f:
+                timing_data = f.readlines()
+            timing_data = [float(x.strip()) for x in timing_data]
+            # use the average of the last (topk_update_iter - 1) data as estimate for timing_3DGS (-1 for safety)
+            timing_3DGS = np.mean(timing_data[-args.topk_update_iter:-1])
+            # then go over the last topk_update_iter-1 entries of layer_timings_per_image
+            # and calculate the average time for the fovealnet layers
+            timing_fovealnet = 0
+            for i in range(args.topk_update_iter-1):
+                layer_timings = layer_timings_per_image[-(i+1)] # retrieve the by-layer timing for the last i-th sequence
+                timing_fovealnet += np.sum(layer_timings) / (args.topk_update_iter-1)
+            # update the topk value
+            current_topk = solve_topk(current_topk, timing_3DGS, timing_fovealnet)
+            print(f"Updated topk value to {current_topk}")
+            # reload the model with the new topk value
+            model = VisionTransformer(num_layers=6, top_k=current_topk).to(device)
+            model.load_state_dict(torch.load(args.foveal_model_path, map_location=device))
+            model.eval()
+
+
         # Wait for Gaussian Splatting process to be ready
         print(f"inferencing sequence {seq_id} in FovealNet, comm.Barrier()")
         comm.Barrier()
@@ -1166,6 +1246,8 @@ elif rank==1:  # FovealNet process
                             layer_times[i] += layer_time
                             layer_timings.append(layer_time)
                         layer_timings_per_image.append(layer_timings)
+                    if args.rune_topk:
+                        topk_values.append(current_topk)
 
 
                 print(f"foveal net time for image idx {img_idx}: {elapsed_time:.2f} ms")
@@ -1217,12 +1299,20 @@ elif rank==1:  # FovealNet process
         #     for image_name, prediction in predictions:
         #         f.write(f"{image_name}: Pitch={prediction[0]:.4f}, Yaw={prediction[1]:.4f}\n")
 
-
-    with open('fovealnet_timing_data_first_image.json', 'w') as f:
-        json.dump({
-            'inference_times': inference_times,
-            'layer_timings_per_image': layer_timings_per_image
-        }, f)
+    if args.tune_topk:
+        # Save timing data to a file
+        with open('fovealnet_timing_data_tune_topk.json', 'w') as f:
+            json.dump({
+                'inference_times': inference_times,
+                'layer_timings_per_image': layer_timings_per_image,
+                'topk_values': topk_values
+            }, f)
+    else:
+        with open('fovealnet_timing_data_first_image.json', 'w') as f:
+            json.dump({
+                'inference_times': inference_times,
+                'layer_timings_per_image': layer_timings_per_image
+            }, f)
 
 
 # Clean up

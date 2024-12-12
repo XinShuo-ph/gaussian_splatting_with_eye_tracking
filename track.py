@@ -34,7 +34,7 @@ device = torch.device("cuda" if (torch.cuda.is_available() and not args.cpuinfer
 # device = torch.device("cpu")
 
 # Load the trained model
-model = VisionTransformer(num_layers=6, top_k=1.0).to(device)
+model = VisionTransformer(num_layers=6, top_k=0.8).to(device)
 model.load_state_dict(torch.load(args.foveal_model_path, map_location=device))
 model.eval()
 
