@@ -1246,7 +1246,7 @@ elif rank==1:  # FovealNet process
                             layer_times[i] += layer_time
                             layer_timings.append(layer_time)
                         layer_timings_per_image.append(layer_timings)
-                    if args.rune_topk:
+                    if args.tune_topk:
                         topk_values.append(current_topk)
 
 
