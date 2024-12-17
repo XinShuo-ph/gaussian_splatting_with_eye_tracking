@@ -244,11 +244,15 @@ def train_model(
             optimizer.zero_grad()
             if foveated:
                 outputs = model(images)
-                print(f"outputs shape: {outputs.shape}")
-                loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
-                    0.5 * criterion(outputs[1], gaze_gt_vecs) + 
-                    criterion(outputs[2], gaze_gt_vecs) )
-                output = outputs[2]
+                # print(f"outputs shape: {outputs.shape}")
+                n_outputs = outputs.shape[0]
+                loss = 0
+                for i in range(n_outputs):
+                    loss += criterion(outputs[i], gaze_gt_vecs) * 2.0**( i + 1 - n_outputs  )
+                # loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
+                #     0.5 * criterion(outputs[1], gaze_gt_vecs) + 
+                #     criterion(outputs[2], gaze_gt_vecs) )
+                output = outputs[-1]
             else:
                 output = model(images)
                 loss = criterion(output, gaze_gt_vecs)
@@ -314,10 +318,15 @@ def train_model(
 
                 if foveated:
                     outputs = model(images)
-                    loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
-                        0.5 * criterion(outputs[1], gaze_gt_vecs) + 
-                        criterion(outputs[2], gaze_gt_vecs) )
-                    output = outputs[2]
+                    # print(f"outputs shape: {outputs.shape}")
+                    n_outputs = outputs.shape[0]
+                    loss = 0
+                    for i in range(n_outputs):
+                        loss += criterion(outputs[i], gaze_gt_vecs) * 2.0**( i + 1 - n_outputs  )
+                    # loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
+                    #     0.5 * criterion(outputs[1], gaze_gt_vecs) + 
+                    #     criterion(outputs[2], gaze_gt_vecs) )
+                    output = outputs[-1]
                 else:
                     output = model(images)
                     loss = criterion(output, gaze_gt_vecs)
@@ -354,6 +363,16 @@ def train_model(
         writer.add_scalar("Loss/Validation", val_loss, epoch)
         writer.add_scalar("Error/Validation_Max", val_max_error, epoch)
         writer.add_scalar("Error/Validation_Min", val_min_error, epoch)
+
+        # Create a directory for the current epoch
+        epoch_dir = os.path.join(output_path, f"epoch_{epoch+1}")
+        if not os.path.exists(epoch_dir):
+            os.makedirs(epoch_dir)
+
+        # Save the model checkpoint in the epoch directory
+        epoch_output_path = os.path.join(epoch_dir, f"model_epoch_{epoch+1}.pt")
+        torch.save(model.state_dict(), epoch_output_path)
+        print(f"Model checkpoint saved to {epoch_output_path}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
