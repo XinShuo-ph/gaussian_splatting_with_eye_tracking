@@ -287,7 +287,7 @@ class VisionTransformerFoveated(nn.Module):
         for i, block in enumerate(self.transformer_layers):
             # print(block)
             x = block(x)
-            if i%2 ==1 and self.top_k < 1:
+            if i%2 ==1:
                 if self.score_method == "attention":
                     attn_scores = self.attention_scores.mean(dim=-1)
                     topk_indices = attn_scores.topk(
@@ -312,14 +312,14 @@ class VisionTransformerFoveated(nn.Module):
                         bs, -1, x.size(-1)
                     )
                     x = informative_tokens
-                features = x.mean(dim=1)
-                gaze_dir = F.relu(self.fc1(features))
-                gaze_dir = F.relu(self.fc2(gaze_dir))
-                gaze_dir = F.relu(self.fc3(gaze_dir))
-                gaze_dir = self.fc4(gaze_dir)
-                # append a deep copy of the gaze_dir tensor to python list outputs
-                # outputs[i//2,:] = gaze_dir.clone()
-                outputs.append(gaze_dir.clone())
+            features = x.mean(dim=1)
+            gaze_dir = F.relu(self.fc1(features))
+            gaze_dir = F.relu(self.fc2(gaze_dir))
+            gaze_dir = F.relu(self.fc3(gaze_dir))
+            gaze_dir = self.fc4(gaze_dir)
+            # append a deep copy of the gaze_dir tensor to python list outputs
+            # outputs[i//2,:] = gaze_dir.clone()
+            outputs.append(gaze_dir.clone())
 
                     # if non_informative_tokens.size(1) > 0:
                     #     non_informative_scores = attn_scores[non_informative_indices].view(

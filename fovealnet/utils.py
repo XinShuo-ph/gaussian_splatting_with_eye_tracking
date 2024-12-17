@@ -246,12 +246,20 @@ def train_model(
                 outputs = model(images)
                 # print(f"outputs shape: {outputs.shape}")
                 n_outputs = outputs.shape[0]
-                loss = 0
-                for i in range(n_outputs):
-                    loss += criterion(outputs[i], gaze_gt_vecs) * 2.0**( i + 1 - n_outputs  )
+                # loss = 0
+                # for i in range(n_outputs):
+                #     loss += criterion(outputs[i], gaze_gt_vecs) * 2.0**( i + 1 - n_outputs  )
                 # loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
                 #     0.5 * criterion(outputs[1], gaze_gt_vecs) + 
                 #     criterion(outputs[2], gaze_gt_vecs) )
+                loss = ( 
+                    criterion(outputs[0], gaze_gt_vecs) * 2.0** ( 1 - n_outputs )  +
+                    criterion(outputs[1], gaze_gt_vecs) * 2.0** ( 2 - n_outputs )  +
+                    criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  + 
+                    criterion(outputs[3], gaze_gt_vecs) * 2.0** ( 4 - n_outputs )  +
+                    criterion(outputs[4], gaze_gt_vecs) * 2.0** ( 5 - n_outputs )  +
+                    criterion(outputs[5], gaze_gt_vecs) * 2.0** ( 6 - n_outputs ) 
+                )
                 output = outputs[-1]
             else:
                 output = model(images)
@@ -320,12 +328,20 @@ def train_model(
                     outputs = model(images)
                     # print(f"outputs shape: {outputs.shape}")
                     n_outputs = outputs.shape[0]
-                    loss = 0
-                    for i in range(n_outputs):
-                        loss += criterion(outputs[i], gaze_gt_vecs) * 2.0**( i + 1 - n_outputs  )
+                    # loss = 0
+                    # for i in range(n_outputs):
+                    #     loss += criterion(outputs[i], gaze_gt_vecs) * 2.0**( i + 1 - n_outputs  )
                     # loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
                     #     0.5 * criterion(outputs[1], gaze_gt_vecs) + 
                     #     criterion(outputs[2], gaze_gt_vecs) )
+                    loss = ( 
+                        criterion(outputs[0], gaze_gt_vecs) * 2.0** ( 1 - n_outputs )  +
+                        criterion(outputs[1], gaze_gt_vecs) * 2.0** ( 2 - n_outputs )  +
+                        criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  + 
+                        criterion(outputs[3], gaze_gt_vecs) * 2.0** ( 4 - n_outputs )  +
+                        criterion(outputs[4], gaze_gt_vecs) * 2.0** ( 5 - n_outputs )  +
+                        criterion(outputs[5], gaze_gt_vecs) * 2.0** ( 6 - n_outputs ) 
+                    )
                     output = outputs[-1]
                 else:
                     output = model(images)
