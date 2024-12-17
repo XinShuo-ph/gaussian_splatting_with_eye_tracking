@@ -260,7 +260,7 @@ class VisionTransformerFoveated(nn.Module):
             for head in pruned_heads:
                 block.attn.head_mask[head] = 0
         
-        self.prune_ratio += self.prune_step
+        self.prune_ratio += self.prune_step 
 
     def random_prune_heads(self):
         for block in self.transformer_layers:
