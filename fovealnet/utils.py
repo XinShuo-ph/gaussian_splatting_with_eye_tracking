@@ -381,7 +381,7 @@ def train_model(
         writer.add_scalar("Error/Validation_Min", val_min_error, epoch)
 
         # Create a directory for the current epoch
-        epoch_dir = os.path.join(output_path, f"epoch_{epoch+1}")
+        epoch_dir = os.path.join("results_epoch", f"epoch_{epoch+1}")
         if not os.path.exists(epoch_dir):
             os.makedirs(epoch_dir)
 
