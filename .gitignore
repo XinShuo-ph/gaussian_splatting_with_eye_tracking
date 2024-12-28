@@ -23,3 +23,6 @@ parallel_track_render_timertest.py
 parallel_track_render.py
 parallel_test.py
 *.json
+fovealnet/error_stat/
+*.csv
+*.txt
