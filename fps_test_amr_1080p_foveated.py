@@ -11,8 +11,8 @@ from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer_amr import GaussianModel
 
-pix_x = 1920
-pix_y = 1080
+# pix_x = 1920
+# pix_y = 1080
 
 # same args as render.py
 parser = ArgumentParser(description="Testing script parameters")
@@ -25,6 +25,8 @@ print(pipeline.debug)
 
 print(pipeline.debug)
 
+parser.add_argument("--pix_x", default=1920, type=int)
+parser.add_argument("--pix_y", default=1080, type=int)
 parser.add_argument("--iteration", default=-1, type=int)
 parser.add_argument("--skip_train", action="store_true")
 parser.add_argument("--skip_test", action="store_true")
@@ -34,8 +36,16 @@ parser.add_argument("--gaze_y", default=0, type=float)
 parser.add_argument("--gaze_r2", default=1e4, type=float)
 parser.add_argument("--gaze_r3", default=1e4, type=float)
 parser.add_argument("--gaze_r4", default=1e4, type=float)
+parser.add_argument("--percentile_r2", default=0.25, type=float)
+parser.add_argument("--percentile_r3", default=0.5, type=float)
+parser.add_argument("--percentile_r4", default=0.9, type=float)
 parser.add_argument("--test_no_render_laststep", action="store_true") # test the time of purely passing the data in foveastep 4
+parser.add_argument("--show_fps", action="store_true") # show fps, otherwise show latency
+parser.add_argument("--interp", action="store_true") # whether do an interpolation to get the final image or just keep the blank pixels
+parser.add_argument("--control_level_by_r", action="store_true") # control the foveation level by the radius
 args = get_combined_args(parser)
+pix_x = args.pix_x
+pix_y = args.pix_y
 print("Rendering " + args.model_path)
 safe_state(args.quiet)
 mydataset = model.extract(args)
@@ -87,9 +97,10 @@ for ratio in [1]:
         for i in range(5):
             rendering = render(view, gaussians, pipeline, background,
                                gaze_x=args.gaze_x, gaze_y=args.gaze_y, gaze_r2=args.gaze_r2, gaze_r3=args.gaze_r3, gaze_r4=args.gaze_r4,
+                                 percentile_r2=args.percentile_r2, percentile_r3=args.percentile_r3, percentile_r4=args.percentile_r4,
                                starter = starter, ender= ender, 
                                starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
-                               test_no_render_laststep = args.test_no_render_laststep
+                               test_no_render_laststep = args.test_no_render_laststep, interpolate_image = args.interp, control_level_by_r = args.control_level_by_r
                                )["render"]
             torch.cuda.synchronize()
             time += starter.elapsed_time(ender)
@@ -99,12 +110,20 @@ for ratio in [1]:
             time3 += starter3.elapsed_time(ender3)
             time4 += starter4.elapsed_time(ender4)
         # count fps every 5 frames
-        fps = 5 / (time / 1000)
-        fps0 = 5 / (time0 / 1000)
-        fps1 = 5 / (time1 / 1000)
-        fps2 = 5 / (time2 / 1000)
-        fps3 = 5 / (time3 / 1000)
-        fps4 = 5 / (time4 / 1000)
+        if args.show_fps:
+            fps = 5 / (time / 1000)
+            fps0 = 5 / (time0 / 1000)
+            fps1 = 5 / (time1 / 1000)
+            fps2 = 5 / (time2 / 1000)
+            fps3 = 5 / (time3 / 1000)
+            fps4 = 5 / (time4 / 1000)
+        else: # otherwise pass latency in ms
+            fps = time / 5
+            fps0 = time0 / 5
+            fps1 = time1 / 5
+            fps2 = time2 / 5
+            fps3 = time3 / 5
+            fps4 = time4 / 5
         # print("FPS: ", fps)
         fpss.append(fps)
         fpss0.append(fps0)
@@ -121,13 +140,26 @@ for ratio in [1]:
     avg_fps3 = sum(fpss3) / len(fpss3)
     avg_fps4 = sum(fpss4) / len(fpss4)
 
-    print(f"Average FPS: {avg_fps}")
-    print(f"Average FPS of fov level 0: {avg_fps0}")
-    print(f"Average FPS of fov level 1: {avg_fps1}")
-    print(f"Average FPS of fov level 2: {avg_fps2}")
-    print(f"Average FPS of fov level 3: {avg_fps3}")
-    print(f"Average FPS of fov level 4: {avg_fps4}")
+    if args.show_fps:      
+        print(f"Average FPS: {avg_fps}")
+        print(f"Average FPS of fov level 0: {avg_fps0}")
+        print(f"Average FPS of fov level 1: {avg_fps1}")
+        print(f"Average FPS of fov level 2: {avg_fps2}")
+        print(f"Average FPS of fov level 3: {avg_fps3}")
+        print(f"Average FPS of fov level 4: {avg_fps4}")
+    else:
+        print(f"Average latency: {avg_fps} ms (including var passing in python)")
+        print(f"Average latency of fov level 0: {avg_fps0} ms")
+        print(f"Average latency of fov level 1: {avg_fps1} ms")
+        print(f"Average latency of fov level 2: {avg_fps2} ms")
+        print(f"Average latency of fov level 3: {avg_fps3} ms")
+        print(f"Average latency of fov level 4: {avg_fps4} ms")
+        
+
     # test = 1/(1/avg_fps0 + 1/avg_fps1 + 1/avg_fps2 + 1/avg_fps3 + 1/avg_fps4)
 
     pix_horizon.append(int(pix_x*ratio))
     fps_avg.append(avg_fps)
+
+
+# torchvision.utils.save_image(rendering, "tmp.png")

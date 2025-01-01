@@ -10,6 +10,7 @@
 #
 import numpy as np
 import torchvision
+import copy
 
 import torch
 import math
@@ -26,13 +27,18 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 gaze_x = 0,  # gaze direction x
                 gaze_y = 0,  # gaze direction y
                 gaze_r2 = 1e4 , gaze_r3=1e4, gaze_r4=1e4,  # radii of the foveal level 2,3,4
+                percentile_r2=0.25, percentile_r3=0.5, percentile_r4=0.9,  # percentiles of the foveal level 2,3,4
            starter=None,ender=None, starters=None, enders=None,
-           interpolate_image = False, test_no_render_laststep=False):
+           interpolate_image = False, test_no_render_laststep=False, control_level_by_r = False):
     """
     Render the scene. 
     
     Background tensor (bg_color) must be on GPU!
     """
+
+    gaze_r2_orig = copy.deepcopy(gaze_r2)
+    gaze_r3_orig = copy.deepcopy(gaze_r3)
+    gaze_r4_orig = copy.deepcopy(gaze_r4)
  
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
@@ -197,6 +203,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             gaze_x,  # gaze direction x
             gaze_y,  # gaze direction y
             gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
+            percentile_r2, percentile_r3, percentile_r4,  # percentiles of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -312,6 +319,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             gaze_x,  # gaze direction x
             gaze_y,  # gaze direction y
             gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
+            percentile_r2, percentile_r3, percentile_r4,  # percentiles of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -344,9 +352,14 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # parsed_tile_AMR_levels_step2 -= 1
     # parsed_tile_AMR_levels_step2[parsed_tile_AMR_levels_step2 < 1] = 1
 
+    if control_level_by_r:
+        foveaStep = 5 # if control level by r, we set foveaStep to 5 (although effectively it's same as 4), and control what levels are rendered by gaze_r2, gaze_r3, gaze_r4
+        gaze_r2 = gaze_r2_orig
+        gaze_r3 = 1e-10 # ~ 0
+        gaze_r4 = 1e-10 # ~ 0
+    else:
+        foveaStep = 2
 
-
-    foveaStep = 2
     buffered = True
     out_color_precomp = out_color_precomp + rendered_image1
     geomBuffer_precomp = geomBuffer
@@ -404,6 +417,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             gaze_x,  # gaze direction x
             gaze_y,  # gaze direction y
             gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
+            percentile_r2, percentile_r3, percentile_r4,  # percentiles of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -436,7 +450,14 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # parsed_tile_AMR_levels_step3 = parsed_tile_AMR_levels.clone()
 
 
-    foveaStep = 3
+    if control_level_by_r:
+        foveaStep = 5 # if control level by r, we set foveaStep to 5 (although effectively it's same as 4), and control what levels are rendered by gaze_r2, gaze_r3, gaze_r4
+        gaze_r2 = gaze_r2_orig
+        gaze_r3 = gaze_r3_orig
+        gaze_r4 = 1e-10 # ~ 0
+    else:
+        foveaStep = 3
+
     out_color_precomp = out_color_precomp + rendered_image2
     geomBuffer_precomp = geomBuffer
     binningBuffer_precomp = binningBuffer
@@ -493,6 +514,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             gaze_x,  # gaze direction x
             gaze_y,  # gaze direction y
             gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
+            percentile_r2, percentile_r3, percentile_r4,  # percentiles of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,
@@ -522,7 +544,15 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         torchvision.utils.save_image(rendered_image3, "tmp3.png")
 
 
-    foveaStep = 4
+
+    if control_level_by_r:
+        foveaStep = 5 # if control level by r, we set foveaStep to 5 (although effectively it's same as 4), and control what levels are rendered by gaze_r2, gaze_r3, gaze_r4
+        gaze_r2 = gaze_r2_orig
+        gaze_r3 = gaze_r3_orig
+        gaze_r4 = gaze_r4_orig
+    else:
+        foveaStep = 4
+
     out_color_precomp = out_color_precomp + rendered_image3
     geomBuffer_precomp = geomBuffer
     binningBuffer_precomp = binningBuffer
@@ -581,6 +611,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             gaze_x,  # gaze direction x
             gaze_y,  # gaze direction y
             gaze_r2, gaze_r3, gaze_r4,  # radii of the foveal level 2,3,4
+            percentile_r2, percentile_r3, percentile_r4,  # percentiles of the foveal level 2,3,4
             out_color_precomp,
             # radii_precomp,
             # means2D_precomp,

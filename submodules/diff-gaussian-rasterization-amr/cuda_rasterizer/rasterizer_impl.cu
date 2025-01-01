@@ -265,9 +265,9 @@ __global__ void setFoveaAMRLevelsKernel(int foveaStep, float gaze_x, float gaze_
                 tile_AMR_levels_last[idx] = tile_AMR_levels_current[idx];
                 tile_AMR_levels_current[idx] = ((current_level >= 4) ? 4 : tile_AMR_levels_last[idx]);
                 break;
-            default:
-                // if <0, set full render
-				tile_AMR_levels_last[idx] = 0;
+            case 5:
+                // max level is 4 so 5 is effectively the same as 4, should revise this later when we have arbitrary num of levels
+				tile_AMR_levels_last[idx] = tile_AMR_levels_current[idx];
 				tile_AMR_levels_current[idx] = current_level;
                 break;
         }
@@ -349,6 +349,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float gaze_x, // gaze direction x
 	const float gaze_y, // gaze direction y
 	const float gaze_r2, const float gaze_r3, const float gaze_r4, // radii of the foveal level 2,3,4
+    const float percentile_r2, const float percentile_r3, const float percentile_r4, // percentiles of the foveal level 2,3,4
 	const float* out_color_precomp,
 	// const int* radii_precomp,
 	// const float* means2D_precomp,
@@ -672,7 +673,10 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// get percentile values and set AMR levels
 	// should change to general numbers percentiles[AMR_MAX_LEVELS - 1]
-	float percentiles[3] = {0.25f, 0.5f, 0.9f};
+
+	// float percentiles[3] = {0.25f, 0.5f, 0.9f};
+	float percentiles[3] = {percentile_r2, percentile_r3, percentile_r4};
+	
 	uint32_t percentile_values[3];
 	// uint32_t* tile_AMR_levels; // use uint8_t to save memory (is this necessary?)
 	// CHECK_CUDA(cudaMalloc(&tile_AMR_levels, num_tiles * sizeof(uint32_t)), debug);

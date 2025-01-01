@@ -1,8 +1,8 @@
 
-# /output/e26eae8e-f: ~/gaussian_splatting_with_eye_tracking/db/playroom
-# /output/29554d64-8: ~/gaussian_splatting_with_eye_tracking/db/drjohnson
-# /output/36cf0258-6: ~/gaussian_splatting_with_eye_tracking/tandt/truck
-# /output/06008696-3: ~/gaussian_splatting_with_eye_tracking/tandt/train
+# output/e26eae8e-f: ~/gaussian_splatting_with_eye_tracking/db/playroom
+# output/29554d64-8: ~/gaussian_splatting_with_eye_tracking/db/drjohnson
+# output/36cf0258-6: ~/gaussian_splatting_with_eye_tracking/tandt/truck
+# output/06008696-3: ~/gaussian_splatting_with_eye_tracking/tandt/train
 
 mpirun -np 2 --bind-to core --rankfile rankfile.txt  python parallel_load_balance.py --foveal_layer_timer --eye_image_sequence_id_start 0 --eye_image_sequence_id_end 100  -m output/06008696-3/ --foveal_cpu  > log.txt 2>&1 
 python parallel_track_render_plot.py --first_image_separate
