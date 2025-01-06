@@ -26,3 +26,4 @@ parallel_test.py
 fovealnet/error_stat/
 *.csv
 *.txt
+original_render*

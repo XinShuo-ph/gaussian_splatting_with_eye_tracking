@@ -55,7 +55,7 @@ if pix_x>0 and pix_y>0:
 bg_color = [1,1,1] if mydataset.white_background else [0, 0, 0]
 background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 rendering = render(view, gaussians, pipeline, background)["render"]
-torchvision.utils.save_image(rendering, "original_render_view%d.png"%camera_idx)
+torchvision.utils.save_image(rendering, "original_render_view%d.pdf"%camera_idx )
 
 # compare with an image purely on a coarse level
 # skip_lelvel = tile_level - coarse_level # skip rendering the lower level tiles, i.e. the accurate pixels are defined every 2^skip_level pixels in x,y directions
@@ -85,7 +85,7 @@ torchvision.utils.save_image(rendering, "original_render_view%d.png"%camera_idx)
 # # transpose the last two dimensions to get the usual convention
 # interpolated_rendering = interpolated_rendering.permute(0,2,1)
 
-# torchvision.utils.save_image(interpolated_rendering, "coarse_render.png")
+# torchvision.utils.save_image(interpolated_rendering, "coarse_render.pdf")
 
 
 # the above gives a coarse rendering globally, we can also do AMR to decide the coarse_level of each tile
@@ -160,7 +160,7 @@ plt.legend(loc='upper center', bbox_to_anchor=(0.75, 1.15), ncol=2, fontsize=16)
 plt.xlim(-1,view.image_width)
 plt.ylim(-1,view.image_height)
 plt.gca().invert_yaxis()
-plt.savefig("original_render_all_gaussians_view%d.png"%camera_idx)
+plt.savefig("original_render_all_gaussians_view%d.png"%camera_idx, bbox_inches='tight')
 
 # now count the num of gaussians on each tile
 tiles_num_x = view.image_width // 2**tile_level + 1 # from 0 to view.image_width//2**tile_level
@@ -213,7 +213,7 @@ plt.yticks(fontsize=16)
 plt.xlim(-1,view.image_width)
 plt.ylim(-1,view.image_height)
 plt.gca().invert_yaxis()
-plt.savefig("original_render_tile_gaussians_view%d.png"%camera_idx)
+plt.savefig("original_render_tile_gaussians_view%d.pdf"%camera_idx,bbox_inches='tight' )
 
 
 # now imshow the tiles_gaussian_count, but note that each pix for tiles_gaussian_count should cover 2^tile_level pixels in previous image
@@ -239,7 +239,7 @@ plt.yticks(fontsize=16)
 plt.xlim(-1,view.image_width)
 plt.ylim(-1,view.image_height)
 plt.gca().invert_yaxis()
-plt.savefig("original_render_tile_AMR_view%d.png"%camera_idx)
+plt.savefig("original_render_tile_AMR_view%d.pdf"%camera_idx,bbox_inches='tight' )
 
 # now render the image with AMR
 accurate_points = []
@@ -279,4 +279,4 @@ interpolated_rendering = interpolated_rendering.reshape(3, view.image_width, vie
 # transpose the last two dimensions to get the usual convention
 interpolated_rendering = interpolated_rendering.permute(0,2,1)
 
-torchvision.utils.save_image(interpolated_rendering, "AMR_render_view%d.png"%camera_idx)
+torchvision.utils.save_image(interpolated_rendering, "AMR_render_view%d.pdf"%camera_idx )

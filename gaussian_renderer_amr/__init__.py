@@ -642,8 +642,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         print("Total pixels: ", redmask.size) 
         torchvision.utils.save_image(rendered_image4, "tmp4.png")
 
-
-    out_color_precomp = out_color_precomp + rendered_image4
+    if interpolate_image:
+        out_color_precomp = rendered_image4
+    else:
+        out_color_precomp = out_color_precomp + rendered_image4
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.

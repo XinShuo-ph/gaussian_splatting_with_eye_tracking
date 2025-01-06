@@ -162,4 +162,4 @@ for ratio in [1]:
     fps_avg.append(avg_fps)
 
 
-# torchvision.utils.save_image(rendering, "tmp.png")
+torchvision.utils.save_image(rendering, "tmp4.png")

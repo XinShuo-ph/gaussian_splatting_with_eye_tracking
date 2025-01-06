@@ -373,6 +373,7 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
                 gaze_x = 0,  # gaze direction x
                 gaze_y = 0,  # gaze direction y
                 gaze_r2 = 1e4 , gaze_r3=1e4, gaze_r4=1e4,  # radii of the foveal level 2,3,4
+                percentile_r2=0.25, percentile_r3=0.5, percentile_r4=0.9,  # percentiles of the foveal level 2,3,4
                 fovealnet : VisionTransformer = None, fovealnet_starters=None, fovealnet_enders=None, 
                 sequence_folder=None, layer_timings_per_image=None, predictions=None, layer_times=None, inference_times=None,
                 total_sequence_time = None, 
