@@ -27,3 +27,4 @@ fovealnet/error_stat/
 *.csv
 *.txt
 original_render*
+user_study
