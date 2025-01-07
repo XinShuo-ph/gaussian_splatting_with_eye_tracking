@@ -1,3 +1,4 @@
+from PIL import Image
 import os
 import shutil
 import random
@@ -18,21 +19,25 @@ image_names = [f for f in os.listdir(foveated_marked_dir) if f.endswith('.png')]
 # Shuffle the image names
 random.shuffle(image_names)
 
-# Copy and rename images
+# Copy, crop, and rename images
 for i, image_name in enumerate(image_names, start=1):
     # Define source paths
     foveated_marked_path = os.path.join(foveated_marked_dir, image_name)
     original_marked_path = os.path.join(original_marked_dir, image_name)
     
-    # Define destination paths
-    foveated_marked_dest = os.path.join(destination_dir, f"foveated/{i}.png")
-    original_marked_dest = os.path.join(destination_dir, f"original/{i}.png")
+    # Open, crop, and save the foveated image
+    with Image.open(foveated_marked_path) as img:
+        cropped_img = img.crop((0, 0, img.width - 1, img.height - 1))
+        foveated_marked_dest = os.path.join(destination_dir, f"foveated/{i}.png")
+        cropped_img.save(foveated_marked_dest)
     
-    # Copy and rename the images
-    shutil.copy(foveated_marked_path, foveated_marked_dest)
-    shutil.copy(original_marked_path, original_marked_dest)
+    # Open, crop, and save the original image
+    with Image.open(original_marked_path) as img:
+        cropped_img = img.crop((0, 0, img.width - 1, img.height - 1))
+        original_marked_dest = os.path.join(destination_dir, f"original/{i}.png")
+        cropped_img.save(original_marked_dest)
 
-print("Images have been shuffled and copied to", destination_dir)
+print("Images have been shuffled, cropped, and copied to", destination_dir)
 
 # then pair them
 
