@@ -25,6 +25,12 @@
 #include <string>
 #include <functional>
 
+// // Device code
+// __global__ void MyKernel(int *d, int *a, int *b)
+// {
+//     int idx = threadIdx.x + blockIdx.x * blockDim.x;
+//     d[idx] = a[idx] * b[idx];
+// }
 std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     auto lambda = [&t](size_t N) {
         t.resize_({(long long)N});
@@ -140,6 +146,27 @@ RasterizeGaussiansCUDA(
 		if (debug) {
 			std::cout << "RasterizeGaussiansCUDA: forward" << std::endl;
 		}
+	    
+// // below: copied from https://stackoverflow.com/questions/28044011/cudaoccupancymaxactiveblockspermultiprocessor-is-undefined
+// 	int numBlocks;        // Occupancy in terms of active blocks
+//     int blockSize = 16;
+//     // These variables are used to convert occupancy to warps
+//     int device;
+//     cudaDeviceProp prop;
+//     int activeWarps;
+//     int maxWarps;
+//     cudaGetDevice(&device);
+//     cudaGetDeviceProperties(&prop, device);
+//     cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+//     &numBlocks,
+//     MyKernel,
+//     blockSize,
+//     0);
+//     activeWarps = numBlocks * blockSize / prop.warpSize;
+//     maxWarps = prop.maxThreadsPerMultiProcessor / prop.warpSize;
+//     std::cout << "Occupancy: " << (double)activeWarps / maxWarps * 100 << "%" << std::endl;
+// // above: https://stackoverflow.com/questions/28044011/cudaoccupancymaxactiveblockspermultiprocessor-is-undefined
+
 	  rendered = CudaRasterizer::Rasterizer::forward(
 	    geomFunc,
 		binningFunc,

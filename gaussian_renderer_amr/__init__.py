@@ -304,6 +304,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     #     interpolate_image = interpolate_image
     # )
 
+    if pipe.debug:
+        print("debug mode on")
+
     # TODO: actually only imageBuffer changes (recording last and current levels)
     # step 1: compute the lowest quality
     rendered_image1, _, geomBuffer, binningBuffer, imageBuffer = rawrasterizer.apply(

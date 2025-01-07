@@ -11,19 +11,12 @@ from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer_amr import GaussianModel
 
-# pix_x = 1920
-# pix_y = 1080
 
 # same args as render.py
 parser = ArgumentParser(description="Testing script parameters")
 model = ModelParams(parser, sentinel=True)
 pipeline = PipelineParams(parser)
 
-print(pipeline.debug)
-
-# pipeline.debug = True
-
-print(pipeline.debug)
 
 parser.add_argument("--pix_x", default=1920, type=int)
 parser.add_argument("--pix_y", default=1080, type=int)
@@ -43,12 +36,17 @@ parser.add_argument("--test_no_render_laststep", action="store_true") # test the
 parser.add_argument("--show_fps", action="store_true") # show fps, otherwise show latency
 parser.add_argument("--interp", action="store_true") # whether do an interpolation to get the final image or just keep the blank pixels
 parser.add_argument("--control_level_by_r", action="store_true") # control the foveation level by the radius
+parser.add_argument("--debug", action="store_true") # debug mode
 args = get_combined_args(parser)
 pix_x = args.pix_x
 pix_y = args.pix_y
 print("Rendering " + args.model_path)
 safe_state(args.quiet)
 mydataset = model.extract(args)
+
+if args.debug:
+    pipeline.debug = True
+    print("Debug mode on")
 
 # render the acurate image for reference
 gaussians = GaussianModel(mydataset.sh_degree) # create an empty gaussian model

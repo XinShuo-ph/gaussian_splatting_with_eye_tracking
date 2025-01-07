@@ -13,7 +13,11 @@
 #include "auxiliary.h"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <iostream>
 namespace cg = cooperative_groups;
+
+// #define RENDER_DEBUG
+
 
 // Forward method for converting the input spherical harmonics
 // coefficients of each Gaussian to a simple RGB color.
@@ -259,7 +263,8 @@ __global__ void preprocessCUDA(int P, int D, int M,
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
 template <uint32_t CHANNELS>
-__global__ void __launch_bounds__(RENDER_BLOCK_X * RENDER_BLOCK_Y)
+// __global__ void __launch_bounds__(RENDER_BLOCK_X * RENDER_BLOCK_Y)
+__global__ void __launch_bounds__(32*32)
 renderCUDA(
 	const uint2* __restrict__ ranges, uint32_t* tile_AMR_levels,
 	const uint32_t* __restrict__ point_list,
@@ -275,6 +280,14 @@ renderCUDA(
 		const float* __restrict__ out_color_precomp,
 		const uint32_t* __restrict__ tile_AMR_levels_last)
 {
+
+
+	// // Declare large number of registers
+    // volatile float force_register_usage[512*1024*1024/sizeof(float)]; // Forces high register usage
+    // // For T4 GPU (64KB shared memory per SM)
+	// __shared__ float forced_single_block_shared_mem[512*1024*1024/sizeof(float)];
+
+
 	// render with AMR, now block.group_index().x/RENDER_BLOCK_RATIO will be tile idx
 	//                   and block.group_index().x % RENDER_BLOCK_RATIO will be pixel offset
 
@@ -282,10 +295,32 @@ renderCUDA(
 	auto block = cg::this_thread_block();
 	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;
 
+	
+	if (block.thread_index().x >= 5 || block.thread_index().y >= 5)
+		return;
+
+// #ifdef RENDER_DEBUG
+// if (block.group_index().x == 10 && block.group_index().y == 10)
+// 	// std::cout << "horizontal_blocks: " << horizontal_blocks << std::endl;
+// 	{
+// 		printf("horizontal_blocks: %d\n", horizontal_blocks);
+// 	}
+// #endif
+
 	uint32_t AMR_level_last = tile_AMR_levels_last[(block.group_index().y /RENDER_BLOCK_RATIO) * horizontal_blocks + (block.group_index().x / RENDER_BLOCK_RATIO)];
 	uint32_t AMR_level = tile_AMR_levels[(block.group_index().y /RENDER_BLOCK_RATIO) * horizontal_blocks + (block.group_index().x / RENDER_BLOCK_RATIO)];
 	if (AMR_level <= AMR_level_last)
 		return;
+
+// #ifdef RENDER_DEBUG
+// if (block.group_index().x == 10 && block.group_index().y == 10){
+// 	printf("AMR_level: %d\n", AMR_level);
+// 	printf("AMR_level_last: %d\n", AMR_level_last);
+// }
+// // 	std::cout << "AMR_level: " << AMR_level << std::endl;
+// // 	std::cout << "AMR_level_last: " << AMR_level_last << std::endl;
+// // }
+// #endif
 
 	// group_index() identifies the tile, e.g. block.group_index().y * horizontal_blocks + block.group_index().x is the tile idx
 	uint2 pix_min = { (block.group_index().x / RENDER_BLOCK_RATIO) * BLOCK_X, (block.group_index().y /RENDER_BLOCK_RATIO) * BLOCK_Y }; // make sure this is correctly floored
@@ -294,7 +329,15 @@ renderCUDA(
 	uint2 pix_0 = { pix_min.x + block.thread_index().x*RENDER_BLOCK_RATIO, pix_min.y + block.thread_index().y*RENDER_BLOCK_RATIO };
 	uint32_t pix_0_id = W * pix_0.y + pix_0.x;
 	float2 pixf_0 = { (float)pix_0.x, (float)pix_0.y };
-
+// #ifdef RENDER_DEBUG
+// if (block.group_index().x == 10 && block.group_index().y == 10){
+// 	printf("pix_0: %f, %f\n", pix_0.x, pix_0.y);
+// 	printf("pix_0_id: %d\n", pix_0_id);
+// }
+// // 	std::cout << "pix_0: " << pix_0.x << ", " << pix_0.y << std::endl;
+// // 	std::cout << "pix_0_id: " << pix_0_id << std::endl;
+// // }
+// #endif
 
 	// determine current tile's AMR level and round of rendering of this group
 	uint32_t offset_x = block.group_index().x % RENDER_BLOCK_RATIO;
@@ -303,12 +346,31 @@ renderCUDA(
 	uint32_t pix_id = W * pix.y + pix.x;
 	float2 pixf = { (float)pix.x, (float)pix.y };
 
+// #ifdef RENDER_DEBUG
+// if (block.group_index().x == 10 && block.group_index().y == 10){
+// 	printf("pix: %f, %f\n", pix.x, pix.y);
+// 	printf("pix_id: %d\n", pix_id);
+// }
+// // 	std::cout << "pix: " << pix.x << ", " << pix.y << std::endl;
+// // 	std::cout << "pix_id: " << pix_id << std::endl;
+// // }
+// #endif
 		
 	// // Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
 	// // Done threads can help with fetching, but don't rasterize
 	bool done = !inside;
 
+	if (block.thread_index().x >= RENDER_BLOCK_X || block.thread_index().y >= RENDER_BLOCK_Y)
+		done = true;
+// #ifdef RENDER_DEBUG
+// if (block.group_index().x == 10 && block.group_index().y == 10){
+// 	if (inside)
+// 		printf("inside\n");
+// 	if (done)
+// 		printf("done\n");
+// }
+// #endif
 
 	uint32_t AMR_round = 1; // the round of AMR level 1,...,AMR_MAX_LEVELS
 	// mark AMR round manually
@@ -455,7 +517,7 @@ renderCUDA(
 
 			// Collectively fetch per-Gaussian data from global to shared
 			int progress = i * RENDER_BLOCK_SIZE + block.thread_rank();
-			if (range.x + progress < range.y)
+			if (range.x + progress < range.y && !done)
 			{
 				int coll_id = point_list[range.x + progress];
 				collected_id[block.thread_rank()] = coll_id;
@@ -665,7 +727,13 @@ void FORWARD::render(
 		const uint32_t* tile_AMR_levels_last,
 		const bool interpolate_image)
 {
-	renderCUDA<NUM_CHANNELS> << <render_tile_grid, block_for_render >> > (
+// #ifdef RENDER_DEBUG
+// 	printf("void FORWARD::render()");
+// #endif
+	// launch bigger block than desired to limit num of cuda cores that are actually used
+	dim3 block_bigger(24, 24, 1);
+	// renderCUDA<NUM_CHANNELS> << <render_tile_grid, block_for_render >> > (
+	renderCUDA<NUM_CHANNELS> << <render_tile_grid, block_bigger >> > (
 		ranges, tile_AMR_levels,
 		point_list,
 		W, H,
