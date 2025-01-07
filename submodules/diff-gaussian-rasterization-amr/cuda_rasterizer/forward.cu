@@ -603,7 +603,7 @@ interpolateCUDA(
 	uint32_t pix_0_id = W * pix_0.y + pix_0.x;
 	float2 pixf_0 = { (float)pix_0.x, (float)pix_0.y };
 
-
+ 
 	// determine AMR round of current thread from offsets
 	uint32_t offset_x = block.group_index().x % RENDER_BLOCK_RATIO;
 	uint32_t offset_y = block.group_index().y % RENDER_BLOCK_RATIO;
