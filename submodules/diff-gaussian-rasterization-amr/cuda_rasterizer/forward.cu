@@ -296,8 +296,8 @@ renderCUDA(
 	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;
 
 	
-	if (block.thread_index().x >= 5 || block.thread_index().y >= 5)
-		return;
+	// if (block.thread_index().x >= 5 || block.thread_index().y >= 5)
+	// 	return;
 
 // #ifdef RENDER_DEBUG
 // if (block.group_index().x == 10 && block.group_index().y == 10)
@@ -362,7 +362,7 @@ renderCUDA(
 	bool done = !inside;
 
 	if (block.thread_index().x >= RENDER_BLOCK_X || block.thread_index().y >= RENDER_BLOCK_Y)
-		done = true;
+		inside = false;
 // #ifdef RENDER_DEBUG
 // if (block.group_index().x == 10 && block.group_index().y == 10){
 // 	if (inside)
@@ -507,6 +507,8 @@ renderCUDA(
 		uint32_t last_contributor = 0;
 		float C[CHANNELS] = { 0 };
 
+if (inside)
+{
 		// Iterate over batches until all done or range is complete
 		for (int i = 0; i < rounds; i++, toDo -= RENDER_BLOCK_SIZE)
 		{
@@ -516,19 +518,20 @@ renderCUDA(
 				break;
 
 			// Collectively fetch per-Gaussian data from global to shared
-			int progress = i * RENDER_BLOCK_SIZE + block.thread_rank();
-			if (range.x + progress < range.y && !done)
+			int progress = i * RENDER_BLOCK_SIZE + block.thread_index().y * RENDER_BLOCK_X + block.thread_index().x;
+			// for safety, replace block.thread_rank() with block.thread_index().y * RENDER_BLOCK_X + block.thread_index().x
+			if (range.x + progress < range.y && inside)
 			{
 				int coll_id = point_list[range.x + progress];
-				collected_id[block.thread_rank()] = coll_id;
+				collected_id[block.thread_index().y * RENDER_BLOCK_X + block.thread_index().x] = coll_id;
 				// skip those above threhold
-				collected_xy[block.thread_rank()] = points_xy_image[coll_id];
-				collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+				collected_xy[block.thread_index().y * RENDER_BLOCK_X + block.thread_index().x] = points_xy_image[coll_id];
+				collected_conic_opacity[block.thread_index().y * RENDER_BLOCK_X + block.thread_index().x] = conic_opacity[coll_id];
 			}
 			block.sync();
 
 			// Iterate over current batch
-			for (int j = 0; !done && j < min(RENDER_BLOCK_SIZE, toDo); j++)
+			for (int j = 0; inside && !done && j < min(RENDER_BLOCK_SIZE, toDo); j++)
 			{
 				// Keep track of current position in range
 				contributor++;
@@ -567,7 +570,7 @@ renderCUDA(
 				last_contributor = contributor;
 			}
 		}
-
+}
 		// All threads that treat valid pixel write out their final
 		// rendering data to the frame and auxiliary buffers.
 		if (inside)
@@ -731,7 +734,7 @@ void FORWARD::render(
 // 	printf("void FORWARD::render()");
 // #endif
 	// launch bigger block than desired to limit num of cuda cores that are actually used
-	dim3 block_bigger(24, 24, 1);
+	dim3 block_bigger(32, 32, 1);
 	// renderCUDA<NUM_CHANNELS> << <render_tile_grid, block_for_render >> > (
 	renderCUDA<NUM_CHANNELS> << <render_tile_grid, block_bigger >> > (
 		ranges, tile_AMR_levels,

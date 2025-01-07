@@ -82,8 +82,8 @@ gaze_r2=1e4
 gaze_r3=1e4
 gaze_r4=1e4
 
-# for ratio in [  2.0/3.0 ,  1  ,  4.0/3.0  ]:
-for ratio in [ 1 ]:
+for ratio in [  2.0/3.0 ,  1  ,  4.0/3.0  ]:
+# for ratio in [ 1 ]:
 
     print(f"Rendering at {int(pix_x*ratio)}x{int(pix_y*ratio)}")
     # change the image width and height

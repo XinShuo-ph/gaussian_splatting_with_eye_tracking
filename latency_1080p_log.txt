@@ -1,0 +1,60 @@
+# latency (in ms) tested on different hardware configurations
+# the content is in the format of
+# <scene> <original_render> <AMR_render> <foveated_render>
+
+# default settings
+playroom 29.132480762481705 23.53245680046081 13.98058324241638 
+playroom 29.036779062271126 23.479353546142583 13.982111222267156 
+
+# set sudo nvidia-smi -pl 60
+playroom 37.7261474761963 
+
+# set to
+# sudo nvidia-smi -pl 70
+# sudo nvidia-smi -ac 405,645
+playroom 51.051413204193125 41.27712010955811 23.5878592967987 
+playroom 51.10890297698974 
+
+# set to
+# sudo nvidia-smi -pl 70
+# sudo nvidia-smi -ac 5000,645
+playroom 51.006607036590566 41.22343825912475 23.61060129928589 
+# so the memory does not affect the latency
+# https://www.techpowerup.com/gpu-specs/jetson-orin-nx-16-gb.c4086
+# refer to the website above, the Jetson Orin NX 16GB has GPU clock = 918MHz
+# the closest value for T4 is 915MHz
+
+# set to
+# sudo nvidia-smi -pl 70
+# sudo nvidia-smi -ac 5000,915
+playroom 37.84158871841431 30.74158766174316 18.14353117370605 
+# add code from https://stackoverflow.com/questions/28044011/cudaoccupancymaxactiveblockspermultiprocessor-is-undefined
+playroom 39.92495192337036 32.67656226921083 21.801162481307983 
+playroom 39.77097319793701 32.67342223548889 21.78117032432557 
+# the code does not change the utility, but simply increase the latency by printing too much
+playroom 37.731639354705806 playroom 37.82255600357056 playroom 37.719977470397964 30.770443281173694 18.23188442993164 
+playroom 37.76238870620726 30.827734132766707 18.186863513946527 
+playroom 37.71643925094605 playroom 37.71665045928955 30.723014574050904 18.15806938171386 
+playroom 37.69034027099608 30.697289485931407 18.121684253692624 
+playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom playroom 
+# this changes the number of cuda cores used by manually adding more idle threads in renderCUDA() function
+playroom 86.52434429168699 66.35228456115723 31.691933202743545 
+playroom 86.49425668334965 66.28779992675783 31.621220546722412 
+
+# next, generate the latency in this sequence:
+
+# truck
+# train
+# drjohnson
+# playroom
+
+# command:
+python generate_foveated_latency.py -m output/36cf0258-6
+python generate_foveated_latency.py -m output/06008696-3
+python generate_foveated_latency.py -m output/29554d64-8
+python generate_foveated_latency.py -m output/e26eae8e-f
+
+git add .
+git commit -m "update latency"
+git push origin reduce-cores 
+
