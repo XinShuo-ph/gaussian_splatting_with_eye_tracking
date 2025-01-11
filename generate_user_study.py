@@ -30,9 +30,9 @@ parser.add_argument("--gaze_y", default=0, type=float)
 parser.add_argument("--gaze_r2", default=1e4, type=float)
 parser.add_argument("--gaze_r3", default=1e4, type=float)
 parser.add_argument("--gaze_r4", default=1e4, type=float)
-parser.add_argument("--percentile_r2", default=0.25, type=float)
-parser.add_argument("--percentile_r3", default=0.5, type=float)
-parser.add_argument("--percentile_r4", default=0.9, type=float)
+parser.add_argument("--percentile_r2", default=0.0, type=float)
+parser.add_argument("--percentile_r3", default=0.1, type=float)
+parser.add_argument("--percentile_r4", default=0.2, type=float)
 parser.add_argument("--test_no_render_laststep", action="store_true") # test the time of purely passing the data in foveastep 4
 parser.add_argument("--interp", action="store_true") # whether do an interpolation to get the final image or just keep the blank pixels
 parser.add_argument("--control_level_by_r", action="store_true") # control the foveation level by the radius
@@ -60,6 +60,14 @@ model_path_to_scene = {
 scene_name = model_path_to_scene[args.model_path]
 print("Scene: ", scene_name)
 
+dataset_dirs = {
+"output/e26eae8e-f": "db/playroom/images",
+"output/29554d64-8": "db/drjohnson/images",
+"output/06008696-3": "tandt/train/images",
+"output/36cf0258-6": "tandt/truck/images"
+}
+dataset_dir = dataset_dirs[args.model_path]
+print("Dataset dir: ", dataset_dir)
 
 for idx in range(5):
 
@@ -81,7 +89,33 @@ for idx in range(5):
                                 )["render"]
 
     torchvision.utils.save_image(original_rendering, "user_study/original/"+scene_name+"%d.png"%idx)
+    original_reds = original_rendering[0].cpu().detach().numpy().T
+    num_blanks = np.sum(original_reds==0)
+    while num_blanks >= 16*16:
+        print("view %d is bad, try the next one"%viewidx)
+        viewidx += 1
+        views[viewidx].image_width = int(pix_x)
+        views[viewidx].image_height = int(pix_y)
+        view = views[viewidx]
+        original_rendering = render(view, gaussians, pipeline, background,
+                                    percentile_r2=0, percentile_r3=0, percentile_r4=0
+                                )["render"]
+        torchvision.utils.save_image(original_rendering, "user_study/original/"+scene_name+"%d.png"%idx)
+        original_reds = original_rendering[0].cpu().detach().numpy().T
+        num_blanks = np.sum(original_reds==0)
 
+    
+    # copy the image form dataset to user_study/dataset
+    if scene_name == 'train' :
+        image_path = dataset_dir + "/%05d.jpg"%(viewidx + 1)
+    elif scene_name == 'truck':
+        image_path = dataset_dir + "/%06d.jpg"%(viewidx + 1)
+    elif scene_name == 'drjohnson':
+        image_path = dataset_dir + "/IMG_%d.jpg"%(viewidx + 6292)
+    elif scene_name == 'playroom':
+        image_path = dataset_dir + "/DSC%05d.jpg"%(viewidx + 5572)
+
+    os.system("cp "+image_path+" user_study/dataset/"+scene_name+"%d.jpg"%idx)
     
     # mark the gaze point
     original_rendering_marked = original_rendering.clone()

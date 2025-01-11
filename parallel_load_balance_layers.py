@@ -82,6 +82,16 @@ parser.add_argument("--tune_layer_iter", default=0, type=int) # tune the number 
 parser.add_argument("--final_layer", default=6, type=int) # the final layer of fovealnet inference
 args = get_combined_args(parser)
 
+# get scene name
+model_path_to_scene = {
+"output/e26eae8e-f": "playroom",
+"output/29554d64-8": "drjohnson",
+"output/06008696-3": "train",
+"output/36cf0258-6": "truck"
+}
+scene_name = model_path_to_scene[args.model_path]
+print("Scene: ", scene_name)
+
 pix_x = args.pix_x
 pix_y = args.pix_y
 
@@ -330,7 +340,7 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
                 percentile_r2=0.25, percentile_r3=0.5, percentile_r4=0.9,  # percentiles of the foveal level 2,3,4
                 fovealnet : VisionTransformer = None, fovealnet_starters=None, fovealnet_enders=None, 
                 sequence_folder=None, layer_timings_per_image=None, predictions=None, layer_times=None, inference_times=None,
-                total_sequence_time = None, gaze_radius_ranges_file=None,
+                total_sequence_time = None, gaze_radius_ranges_file=None, gaze_render_radii_file=None, 
            starter=None,ender=None, starters=None, enders=None, steps_performed=None,
            interpolate_image = False, test_no_render_laststep=False):
     """
@@ -347,6 +357,8 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
         # upper bound means 99% of the ground truth pixels would be rendered
         gaze_r2_d, gaze_r3_d, gaze_r4_d, gaze_r2_u, gaze_r3_u, gaze_r4_u = np.loadtxt(gaze_radius_ranges_file, unpack=True)
 
+    if gaze_render_radii_file is not None:
+        gaze_r2_layers, gaze_r3_layers, gaze_r4_layers = np.loadtxt(gaze_render_radii_file, unpack=True)
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
@@ -595,8 +607,12 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
             mid_y = (pix_y*ratio) / 2
             gaze_x = np.sin(local_gaze_buffer[img_idx][0]) * args.angle_to_pix_radius + mid_x
             gaze_y = np.sin(local_gaze_buffer[img_idx][1]) * args.angle_to_pix_radius + mid_y
-
-            if gaze_radius_ranges_file is not None:
+            
+            if gaze_render_radii_file is not None:
+                gaze_r2_cur = gaze_r2_layers[foveaLayer-1]
+                gaze_r3_cur = gaze_r3_layers[foveaLayer-1]
+                gaze_r4_cur = gaze_r4_layers[foveaLayer-1]
+            elif gaze_radius_ranges_file is not None:
                 gaze_r2_cur = gaze_r2_d[foveaLayer-1]
                 gaze_r3_cur = gaze_r3_d[foveaLayer-1]
                 gaze_r4_cur = gaze_r4_d[foveaLayer-1]
@@ -784,6 +800,7 @@ if rank == 0:  # Gaussian Splatting process
                                 sequence_folder=sequence_folder, layer_timings_per_image=layer_timings_per_image,
                                 predictions=predictions, layer_times=layer_times, inference_times=inference_times,
                                 total_sequence_time=total_sequence_time, gaze_radius_ranges_file="fovealnet/gaze_radius_ranges.txt",
+                                gaze_render_radii_file = "fovealnet/gaze_render_radii_it%d.txt"%args.tune_layer_iter,
                                test_no_render_laststep=args.test_no_render_laststep
                                )["render"]
             
@@ -810,7 +827,7 @@ if rank == 0:  # Gaussian Splatting process
         image_step_times.append(view_image_step_times)
     
     # Save timing data to a file
-    with open('tune_layers_it%d_timing_data.json'%args.tune_layer_iter , 'w') as f:
+    with open('tune_layers_it%d_cpu%d_%s_3DGS_timing.json'%(args.tune_layer_iter, args.cpucount, scene_name), 'w') as f:
         json.dump({
             'total_times': total_times,
             'image_step_times': image_step_times
@@ -970,7 +987,7 @@ elif rank==1:  # FovealNet process
 
             predictions.append((image_name, prediction))
 
-    with open('tune_layers_it%d_fovealnet_timing.json'%args.tune_layer_iter , 'w') as f:
+    with open('tune_layers_it%d_cpu%d_%s_fovealnet_timing.json'%(args.tune_layer_iter, args.cpucount, scene_name) , 'w') as f:
         json.dump({
             'inference_times': inference_times,
             'layer_timings_per_image': layer_timings_per_image

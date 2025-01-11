@@ -11,9 +11,11 @@ from tqdm import tqdm
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference for gaze estimation model.")
     parser.add_argument("--model_path", default="results_20241022/model_minmax_0.8.pt", type=str, help="Path to the trained model")
-    parser.add_argument("--image_folder", default="/home/ubuntu/openeds/train/sequences/7400/", type=str, help="Folder containing input images")
+    parser.add_argument("--image_folder", default="/home/ubuntu/openeds/train/sequences/6400/", type=str, help="Folder containing input images")
     parser.add_argument("--output_file", type=str, default="predictions.txt", help="Output file for predictions")
     parser.add_argument("--layer_timer", action="store_true", help="Enable layer-wise timing")
+    parser.add_argument("--cpu_infer", action="store_true", help="use CPU for inference")
+    parser.add_argument("--resnet", action="store_true", help="use ResNet instead of ViT")
     return parser.parse_args()
 
 def load_image(image_path):
@@ -27,7 +29,7 @@ def load_image(image_path):
 
 def main():
     args = parse_args()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu_infer else "cpu")
 
     # Load the trained model
     model = VisionTransformer(num_layers=6, top_k=1.0).to(device)

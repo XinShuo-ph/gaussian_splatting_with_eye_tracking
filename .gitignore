@@ -28,3 +28,4 @@ fovealnet/error_stat/
 *.txt
 original_render*
 user_study
+tune_layers*.pdf

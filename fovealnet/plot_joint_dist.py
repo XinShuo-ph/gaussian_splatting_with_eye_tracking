@@ -34,7 +34,7 @@ for layer_index in range(6):
     bins = 20  # Adjust as needed for resolution
 
     # Create the figure and gridspec layout
-    fig = plt.figure(figsize=(8, 8))
+    fig = plt.figure(figsize=(5, 5))
     grid = plt.GridSpec(4, 4, hspace=0.0, wspace=0.0)
 
     # Main plot: 2D histogram
@@ -54,8 +54,8 @@ for layer_index in range(6):
         cmap='viridis',
         density=True
     )
-    main_ax.set_xlabel('error of gaze prediction x (degree)')
-    main_ax.set_ylabel('error of gaze prediction y (degree)')
+    main_ax.set_xlabel('error of gaze prediction x ($^\\circ$)', fontsize=14)
+    main_ax.set_ylabel('error of gaze prediction y ($^\\circ$)', fontsize=14)
 
     # Set axis limits for main axes
     main_ax.set_xlim(xmin, xmax)
@@ -82,7 +82,7 @@ for layer_index in range(6):
     x_fit = np.linspace(xmin, xmax, 100)
     x_pdf = norm.pdf(x_fit, x_mean, x_std)
     x_hist_ax.plot(x_fit, x_pdf, 'r--', label='Gaussian fit')
-    x_hist_ax.legend()
+    x_hist_ax.legend( fontsize=12, loc = 'upper right')
     print('x_mean:', x_mean)
     print('x_std:', x_std)
 
@@ -115,7 +115,7 @@ for layer_index in range(6):
     fig.subplots_adjust(right=0.85)
     cbar_ax = fig.add_axes([0.88, 0.1, 0.03, 0.6])  # [left, bottom, width, height]
     cbar = fig.colorbar(h[3], cax=cbar_ax)
-    cbar.set_label('Density')
+    cbar.set_label('Probability Density', fontsize=14)
 
     # Ensure the directory exists
     if not os.path.exists('error_stat'):
@@ -123,8 +123,8 @@ for layer_index in range(6):
 
     # Save and show the plot
     # plt.savefig('error_stat/joint_distribution_layer5.png', dpi=300, bbox_inches='tight')
-    plt.savefig('error_stat/joint_distribution_layer%d.pdf'%layer_index, bbox_inches='tight')
-    plt.savefig('error_stat/joint_distribution_layer%d.png'%layer_index, bbox_inches='tight')
+    plt.savefig('error_stat/joint_distribution_layer%d.pdf'%(layer_index+1), bbox_inches='tight')
+    plt.savefig('error_stat/joint_distribution_layer%d.png'%(layer_index+1), bbox_inches='tight')
     plt.show()
 
 # next, plot the avg_std of all layers
@@ -139,11 +139,12 @@ for layer_index in range(6):
     avgstd = (x_std + y_std) / 2
     avgstds.append(avgstd)
 
-plt.figure().set_size_inches(6, 4)
-plt.plot(range(1,7),avgstds, marker='o')
+plt.figure().set_size_inches(10, 2)
+plt.semilogy(range(1,7),avgstds, marker='o')
+plt.ylim([0.1, 10])
 print(avgstds)
-plt.xlabel('Fovealnet layers')
-plt.ylabel('standard deviation (degree)')
+plt.xlabel('FovealNet layers', fontsize=10)
+plt.ylabel('$\\sigma$ ($^\\circ$)', fontsize=10)
 # plt.grid()
 plt.savefig('error_stat/avg_std_layers.pdf', bbox_inches='tight')
 plt.savefig('error_stat/avg_std_layers.png', bbox_inches='tight')

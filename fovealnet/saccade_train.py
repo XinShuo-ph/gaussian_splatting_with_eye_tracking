@@ -4,7 +4,9 @@ from utils import EdsDataset, train_model, AllEdsDataset
 from torch.optim.lr_scheduler import StepLR
 from sklearn.model_selection import train_test_split
 # from vit_model import VisionTransformer
-from timm_vit import VisionTransformer, VisionTransformerFoveated, ResNetFoveated
+# from timm_vit import VisionTransformer, VisionTransformerFoveated
+from saccade_model import *
+from saccade_utils import *
 import argparse
 import os
 from datetime import datetime
@@ -194,7 +196,7 @@ def parse_args():
         default="./data/validation/validation/val.csv",
         help="Information File",
     )
-    parser.add_argument("--output_dir", type=str, default="results", help="output path")
+    parser.add_argument("--output_dir", type=str, default="results_saccade", help="output path")
     parser.add_argument(
         "--log_dir",
         type=str,
@@ -212,7 +214,7 @@ def parse_args():
     )
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
     parser.add_argument("--train_foveated", action="store_true", help="Train with foveated images")
-    parser.add_argument("--resnet", action="store_true", help="Use resnet backbone")
+    parser.add_argument('--hidden_dim', type=int, default=64, help='Hidden dimension size for GRU')
 
     return parser.parse_args()
 
@@ -247,7 +249,7 @@ def main():
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
-    output_path = os.path.join(args.output_dir, "model_minmax_0.8.pt")
+    output_path = os.path.join(args.output_dir, "model_minmax.pt")
 
     current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
     log_dir = os.path.join(args.log_dir, current_time)
@@ -285,12 +287,7 @@ def main():
         ),
     }
 
-    if args.resnet:
-        model = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
-    elif args.train_foveated:
-        model = VisionTransformerFoveated(num_layers = 6, top_k = 1.0).to(device)
-    else:
-        model = VisionTransformer(num_layers = 6, top_k = 1.0).to(device)
+    model = CNNRNNModel(hidden_dim=args.hidden_dim, num_classes=2).cuda()
 
     criterion = nn.L1Loss()
 

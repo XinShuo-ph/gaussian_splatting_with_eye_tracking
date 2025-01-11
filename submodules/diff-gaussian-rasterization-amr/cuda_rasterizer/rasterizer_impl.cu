@@ -193,11 +193,11 @@ __global__ void setAMRLevelsKernel(uint32_t* n_intersections, uint32_t* percenti
     if (idx < num_tiles)
     {
         uint32_t value = n_intersections[idx];
-        if (value <= percentile_values[0])
+        if (value < percentile_values[0])
             tile_AMR_levels[idx] = 1;
-        else if (value <= percentile_values[1])
+        else if (value < percentile_values[1])
             tile_AMR_levels[idx] = 2;
-        else if (value <= percentile_values[2])
+        else if (value < percentile_values[2])
             tile_AMR_levels[idx] = 3;
         else
             tile_AMR_levels[idx] = 4;
@@ -250,24 +250,24 @@ __global__ void setFoveaAMRLevelsKernel(int foveaStep, float gaze_x, float gaze_
 				tile_AMR_levels_current[idx] = 0;
 				break; // Do nothing, only do preprocessing for step 0
 			case 1:
-				tile_AMR_levels_last[idx] = tile_AMR_levels_current[idx];
+				tile_AMR_levels_last[idx] = max(tile_AMR_levels_current[idx], tile_AMR_levels_last[idx]);
 				tile_AMR_levels_current[idx] = ((current_level >= 1) ? 1 : tile_AMR_levels_last[idx]);
 				break;
             case 2:
-                tile_AMR_levels_last[idx] = tile_AMR_levels_current[idx];
+                tile_AMR_levels_last[idx] = max(tile_AMR_levels_current[idx], tile_AMR_levels_last[idx]);
                 tile_AMR_levels_current[idx] = ((current_level >= 2) ? 2 : tile_AMR_levels_last[idx]);
                 break;
             case 3:
-                tile_AMR_levels_last[idx] = tile_AMR_levels_current[idx];
+                tile_AMR_levels_last[idx] = max(tile_AMR_levels_current[idx], tile_AMR_levels_last[idx]);
                 tile_AMR_levels_current[idx] = ((current_level >= 3) ? 3 : tile_AMR_levels_last[idx]);
                 break;
             case 4:
-                tile_AMR_levels_last[idx] = tile_AMR_levels_current[idx];
+                tile_AMR_levels_last[idx] = max(tile_AMR_levels_current[idx], tile_AMR_levels_last[idx]);
                 tile_AMR_levels_current[idx] = ((current_level >= 4) ? 4 : tile_AMR_levels_last[idx]);
                 break;
             case 5:
                 // max level is 4 so 5 is effectively the same as 4, should revise this later when we have arbitrary num of levels
-				tile_AMR_levels_last[idx] = tile_AMR_levels_current[idx];
+				tile_AMR_levels_last[idx] = max(tile_AMR_levels_current[idx], tile_AMR_levels_last[idx]);
 				tile_AMR_levels_current[idx] = current_level;
                 break;
         }
