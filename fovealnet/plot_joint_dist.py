@@ -136,6 +136,7 @@ for layer_index in range(6):
     y_errors = layer_errors[:, 1]
     x_mean, x_std = norm.fit(x_errors)
     y_mean, y_std = norm.fit(y_errors)
+    print(layer_index+1, '&',x_std, '&',y_std,'\\\\')   
     avgstd = (x_std + y_std) / 2
     avgstds.append(avgstd)
 

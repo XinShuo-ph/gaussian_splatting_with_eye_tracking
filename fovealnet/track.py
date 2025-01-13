@@ -4,9 +4,10 @@ from torchvision import transforms
 from PIL import Image
 import argparse
 import os
-from timm_vit import VisionTransformer
+from timm_vit import VisionTransformer, ResNetTracking, ResNetFoveated
 import numpy as np
 from tqdm import tqdm
+import mpi4py
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference for gaze estimation model.")
@@ -16,6 +17,7 @@ def parse_args():
     parser.add_argument("--layer_timer", action="store_true", help="Enable layer-wise timing")
     parser.add_argument("--cpu_infer", action="store_true", help="use CPU for inference")
     parser.add_argument("--resnet", action="store_true", help="use ResNet instead of ViT")
+    parser.add_argument("--foveated", action="store_true", help="use foveated model")
     return parser.parse_args()
 
 def load_image(image_path):
@@ -32,13 +34,22 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu_infer else "cpu")
 
     # Load the trained model
-    model = VisionTransformer(num_layers=6, top_k=1.0).to(device)
+    if args.resnet:
+        if args.foveated:
+            model = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
+        else:
+            model = ResNetTracking(backbone_name="resnet34", top_k=1.0).to(device)
+    else:
+        model = VisionTransformer(num_layers=6, top_k=1.0).to(device)
     model.load_state_dict(torch.load(args.model_path, map_location=device))
     model.eval()
 
     # Create CUDA events for timing if layer_timer is enabled
     if args.layer_timer:
-        num_events = len(model.transformer_layers) + 2  # +1 for patch embedding, +1 for final layers
+        if args.resnet:
+            num_events = 6
+        else:
+            num_events = len(model.transformer_layers) + 2  # +1 for patch embedding, +1 for final layers
         starters = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
         enders = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
     else:
@@ -48,7 +59,10 @@ def main():
     predictions = []
     total_time = 0
     num_images = 0
-    layer_times = [0] * (len(model.transformer_layers) + 2) if args.layer_timer else None
+    if args.resnet:
+        layer_times = [0] * 6 if args.layer_timer else None
+    else:
+        layer_times = [0] * (len(model.transformer_layers) + 2) if args.layer_timer else None
     
     for image_name in tqdm(os.listdir(args.image_folder), desc="Processing images"):
         if image_name.lower().endswith(('.png', '.jpg', '.jpeg')):

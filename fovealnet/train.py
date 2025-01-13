@@ -4,7 +4,7 @@ from utils import EdsDataset, train_model, AllEdsDataset
 from torch.optim.lr_scheduler import StepLR
 from sklearn.model_selection import train_test_split
 # from vit_model import VisionTransformer
-from timm_vit import VisionTransformer, VisionTransformerFoveated, ResNetFoveated
+from timm_vit import VisionTransformer, VisionTransformerFoveated, ResNetTracking, ResNetFoveated
 import argparse
 import os
 from datetime import datetime
@@ -210,6 +210,7 @@ def parse_args():
     parser.add_argument(
         "--patience", type=int, default=15, help="Early stopping patience"
     )
+    parser.add_argument("--topk", type=float, default=1.0, help="Top k value for pruning tokens")
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
     parser.add_argument("--train_foveated", action="store_true", help="Train with foveated images")
     parser.add_argument("--resnet", action="store_true", help="Use resnet backbone")
@@ -286,11 +287,14 @@ def main():
     }
 
     if args.resnet:
-        model = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
+        if args.train_foveated:
+            model = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
+        else:
+            model = ResNetTracking(backbone_name="resnet34", top_k=1.0).to(device)
     elif args.train_foveated:
-        model = VisionTransformerFoveated(num_layers = 6, top_k = 1.0).to(device)
+        model = VisionTransformerFoveated(num_layers = 6, top_k = args.topk).to(device)
     else:
-        model = VisionTransformer(num_layers = 6, top_k = 1.0).to(device)
+        model = VisionTransformer(num_layers = 6, top_k = args.topk).to(device)
 
     criterion = nn.L1Loss()
 
@@ -310,7 +314,8 @@ def main():
         output_path=output_path,
         num_epochs=args.num_epochs,
         scheduler=scheduler,
-        foveated=args.train_foveated
+        foveated=args.train_foveated,
+        resnet = args.resnet
     )
 
 

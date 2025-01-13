@@ -80,8 +80,12 @@ parser.add_argument("--gaze_r4", default=150, type=float)
 parser.add_argument("--no_competing_device", action="store_true") # do not let the 3DGS and fovealnet process to compete for the GPU resource
 parser.add_argument("--tune_layer_iter", default=0, type=int) # tune the number of layers for each fovea step
 parser.add_argument("--final_layer", default=6, type=int) # the final layer of fovealnet inference
+parser.add_argument("--resnet", action="store_true") # use resnet instead of vit
 args = get_combined_args(parser)
 
+
+if args.resnet:
+    max_steps = 6
 # get scene name
 model_path_to_scene = {
 "output/e26eae8e-f": "playroom",
@@ -329,6 +333,145 @@ class VisionTransformer(nn.Module):
         return gaze_dir
         
 
+class ResNetFoveated(nn.Module):
+    def __init__(
+        self,
+        backbone_name="resnet34",
+        pretrained=True,
+        in_channels=1,
+        num_layers=4,  # Number of ResNet stages to use
+        top_k=1,
+        prune_ratio=0.0,
+        target_prune_ratio=0.5,
+        prune_step=0.05,
+        score_method="feature_map",
+    ):
+        super(ResNetFoveated, self).__init__()
+
+        # Initialize ResNet backbone
+        self.backbone = timm.create_model(backbone_name, pretrained=pretrained, num_classes=0, in_chans=in_channels)
+
+        # Select layers from ResNet for feature extraction
+        # Example for resnet50: layers are layer1, layer2, layer3, layer4
+        self.layer_names = ["layer1", "layer2", "layer3", "layer4"][:num_layers]
+        self.layers = nn.ModuleList([getattr(self.backbone, layer) for layer in self.layer_names])
+
+        # Define fully connected layers based on the backbone's output dimensions
+        backbone_output_dim = self.get_backbone_output_dim(backbone_name)
+        self.fc1 = nn.Linear(backbone_output_dim, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, 2)
+
+        self.fc1_0 = nn.Linear(64, 512)
+        self.fc1_1 = nn.Linear(128, 512)
+        self.fc1_2 = nn.Linear(256, 512)
+
+        self.top_k = top_k
+        self.score_method = score_method
+        self.prune_ratio = prune_ratio
+        self.prune_step = prune_step
+        self.target_prune_ratio = target_prune_ratio
+
+        # Placeholder for attention or feature map scores if needed
+        self.feature_scores = None
+
+
+    def get_backbone_output_dim(self, backbone_name):
+        # Define output dimensions based on backbone
+        if backbone_name.startswith("resnet50"):
+            return 2048
+        elif backbone_name.startswith("resnet34"):
+            return 512
+        # Add more mappings if using different ResNet variants
+        else:
+            raise ValueError(f"Unsupported backbone: {backbone_name}")
+
+
+    def forward(self, x):
+        outputs = []
+                # Pass through initial ResNet layers
+        x = self.backbone.conv1(x)
+        x = self.backbone.bn1(x)
+        x = self.backbone.act1(x)
+        x = self.backbone.maxpool(x)
+        layeridx = 0
+        for layer in self.layers:
+            x = layer(x)
+
+            gazedir = F.adaptive_avg_pool2d(x, (1, 1)).flatten(1)
+            if layeridx == 0:
+                gaze_dir = F.relu(self.fc1_0(gazedir))
+            elif layeridx == 1:
+                gaze_dir = F.relu(self.fc1_1(gazedir))
+            elif layeridx == 2:
+                gaze_dir = F.relu(self.fc1_2(gazedir))
+            else:
+                gaze_dir = F.relu(self.fc1(gazedir))
+            gaze_dir = F.relu(self.fc2(gaze_dir))
+            gaze_dir = F.relu(self.fc3(gaze_dir))
+            gaze_dir = self.fc4(gaze_dir)
+            
+            outputs.append(gaze_dir.clone())
+            layeridx += 1
+        
+        # make the python list outputs a tensor
+        outputs = torch.stack(outputs)
+        return outputs
+
+    def forward_timer(self, x, starters=None, enders=None, img_idx=0):
+        if starters is None or enders is None:
+            raise ValueError("starters and enders must be provided for timing")
+
+        starters[0].record()  # Start timing for backbone
+        x = self.backbone.conv1(x)
+        x = self.backbone.bn1(x)
+        x = self.backbone.act1(x)
+        x = self.backbone.maxpool(x)
+        enders[0].record()  # End timing for initial backbone layers
+
+        for i, layer in enumerate(self.layers):
+            starters[i+1].record()  # Start timing for this ResNet layer
+            x = layer(x)
+
+            gazedir = F.adaptive_avg_pool2d(x, (1, 1)).flatten(1)
+            if i == 0:
+                gaze_dir = F.relu(self.fc1_0(gazedir))
+            elif i == 1:
+                gaze_dir = F.relu(self.fc1_1(gazedir))
+            elif i == 2:
+                gaze_dir = F.relu(self.fc1_2(gazedir))
+            else:
+                gaze_dir = F.relu(self.fc1(gazedir))
+            gaze_dir = F.relu(self.fc2(gaze_dir))
+            gaze_dir = F.relu(self.fc3(gaze_dir))
+            gaze_dir = self.fc4(gaze_dir)
+            
+            # update the gaze prediction buffer   
+            local_predictions_buffer[img_idx] = gaze_dir.cpu().numpy()[0]  
+            local_fovealnet_level_buffer[img_idx] = i + 1
+            enders[i+1].record()  # End timing for this transformer block
+            # if i % 2 == 1 and self.score_method == "attention":
+            print(f"Write gaze prediction to buffer: {local_predictions_buffer[img_idx]} at level {local_fovealnet_level_buffer[img_idx]} for eye image idx {img_idx}")
+            win1.Lock(0)
+            win1.Put(local_predictions_buffer, 0)
+            win1.Unlock(0)
+
+            win2.Lock(0)
+            win2.Put(local_fovealnet_level_buffer, 0)
+            win2.Unlock(0)
+
+        starters[len(self.layers)+1].record()  # Start timing for final layers
+        x = F.adaptive_avg_pool2d(x, (1, 1)).flatten(1)
+        gaze_dir = F.relu(self.fc1(x))
+        gaze_dir = F.relu(self.fc2(gaze_dir))
+        gaze_dir = F.relu(self.fc3(gaze_dir))
+        gaze_dir = self.fc4(gaze_dir)
+        enders[len(self.layers)+1].record()  # End timing for final layers
+
+        return gaze_dir
+    
+
 
 
 # define render function in this script
@@ -349,7 +492,7 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
     Background tensor (bg_color) must be on GPU!
     """
  
-    num_events = len(fovealnet.transformer_layers) + 2
+    num_events = args.final_layer + 2
 
     if gaze_radius_ranges_file is not None:
         # read the lower and upper bounds of the gaze radii, for each prediction layers
@@ -579,8 +722,12 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
     # run parallel with fovealnet in first rendering
     for img_idx in [0]:
         print("receiving fovealnet prediction for eye image index: ", img_idx)
-        foveaLayer = 1 
-        while foveaLayer < 6: # i.e. render until reach highest foveal level
+        if args.resnet:
+            foveaLayer = 0
+        else:
+            foveaLayer = 1 
+        while foveaLayer < args.final_layer:
+         # i.e. render until reach highest foveal level
             
             # sync gaze prediction
             win1.Lock(1)
@@ -624,10 +771,16 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
             print(f"gaze at pixel: {gaze_x}, {gaze_y}, foveaLayer: {foveaLayer}")
 
             if steps_performed is not None:
-                steps_performed[foveaLayer + img_idx*5] = 1
+                if args.resnet:
+                    steps_performed[foveaLayer + 1 + img_idx*5] = 1
+                else:
+                    steps_performed[foveaLayer + img_idx*5] = 1
 
             if starters is not None:
-                starters[foveaLayer + img_idx*5].record()
+                if args.resnet:
+                    starters[foveaLayer + 1 + img_idx*5].record()
+                else:
+                    starters[foveaLayer + img_idx*5].record()
 
             geomBuffer_precomp = geomBuffer
             binningBuffer_precomp = binningBuffer
@@ -663,7 +816,10 @@ def render_mpi(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tens
             )
             out_color_precomp = out_color_precomp + rendered_image0
             if enders is not None:
-                enders[foveaLayer + img_idx*5].record()
+                if args.resnet:
+                    enders[foveaLayer + 1 + img_idx*5].record()
+                else:
+                    enders[foveaLayer + img_idx*5].record()
             if args.no_competing_device:
                 local_GS_level_buffer[img_idx] = foveaLayer
                 win3.Lock(0)
@@ -750,8 +906,10 @@ if rank == 0:  # Gaussian Splatting process
     num_sms = props.multi_processor_count
     print(f"FovealNet process is using {num_sms} stream multiprocessors.")
 
-
-    fovmodel = VisionTransformer(num_layers=6, top_k=1.0).to(device)
+    if args.resnet:
+        fovmodel = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
+    else:
+        fovmodel = VisionTransformer(num_layers=6, top_k=1.0).to(device)
     fovmodel.load_state_dict(torch.load(args.foveal_model_path, map_location=device))
     fovmodel.eval()
 
@@ -772,9 +930,11 @@ if rank == 0:  # Gaussian Splatting process
         seq_id = idx + args.eye_image_sequence_id_start
         print(f"Rendering view {idx} in 3DGS, and using sequence {seq_id} for fovealnet")
 
+        num_events = args.final_layer + 2  # +1 for patch embedding, +1 for final layers
+        if args.resnet:
+            num_events -= 1 
         # Create CUDA events for timing if foveal_layer_timer is enabled
         if args.foveal_layer_timer:
-            num_events = len(fovmodel.transformer_layers) + 2  # +1 for patch embedding, +1 for final layers
             fovealnet_starters = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
             fovealnet_enders = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
         else:
@@ -787,11 +947,15 @@ if rank == 0:  # Gaussian Splatting process
         # Process images and make predictions
         predictions = []
         total_sequence_time = 0
-        layer_times = [0] * (len(fovmodel.transformer_layers) + 2) if args.foveal_layer_timer else None
+        layer_times = [0] * (num_events) if args.foveal_layer_timer else None
         timeall = 0
         steps_performed = [0] * 700
         GS_level_buffer = np.zeros(150, dtype=np.int32)
         local_GS_level_buffer = np.zeros(150, dtype=np.int32)
+        if args.resnet:
+            gaze_radii_file = "fovealnet/gaze_render_radii_it%d_resnet34.txt"%args.tune_layer_iter
+        else:
+            gaze_radii_file = "fovealnet/gaze_render_radii_it%d.txt"%args.tune_layer_iter
         with torch.no_grad():
             rendering = render_mpi(view, gaussians, pipeline, background,starter = starter, ender= ender, 
                                starters = mystarters, enders = myenders, steps_performed=steps_performed,
@@ -800,7 +964,7 @@ if rank == 0:  # Gaussian Splatting process
                                 sequence_folder=sequence_folder, layer_timings_per_image=layer_timings_per_image,
                                 predictions=predictions, layer_times=layer_times, inference_times=inference_times,
                                 total_sequence_time=total_sequence_time, gaze_radius_ranges_file="fovealnet/gaze_radius_ranges.txt",
-                                gaze_render_radii_file = "fovealnet/gaze_render_radii_it%d.txt"%args.tune_layer_iter,
+                                gaze_render_radii_file = gaze_radii_file,
                                test_no_render_laststep=args.test_no_render_laststep
                                )["render"]
             
@@ -827,7 +991,11 @@ if rank == 0:  # Gaussian Splatting process
         image_step_times.append(view_image_step_times)
     
     # Save timing data to a file
-    with open('tune_layers_it%d_cpu%d_%s_3DGS_timing.json'%(args.tune_layer_iter, args.cpucount, scene_name), 'w') as f:
+    if args.resnet:
+        render_timing_filename = 'tune_layers_it%d_cpu%d_%s_3DGS_timing_resnet34.json'%(args.tune_layer_iter, args.cpucount, scene_name)
+    else:
+        render_timing_filename = 'tune_layers_it%d_cpu%d_%s_3DGS_timing.json'%(args.tune_layer_iter, args.cpucount, scene_name)
+    with open(render_timing_filename, 'w') as f:
         json.dump({
             'total_times': total_times,
             'image_step_times': image_step_times
@@ -860,8 +1028,11 @@ elif rank==1:  # FovealNet process
     
     current_topk = 1.0
 
+    if args.resnet:
+        model = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
+    else:
+        model = VisionTransformer(num_layers=6, top_k=current_topk).to(device)
 
-    model = VisionTransformer(num_layers=6, top_k=current_topk).to(device)
     model.load_state_dict(torch.load(args.foveal_model_path, map_location=device))
 
     
@@ -896,7 +1067,7 @@ elif rank==1:  # FovealNet process
         
         # Create CUDA events for timing if foveal_layer_timer is enabled
         if args.foveal_layer_timer:
-            num_events = len(model.transformer_layers) + 2  # +1 for patch embedding, +1 for final layers
+            num_events = args.final_layer + 2  # +1 for patch embedding, +1 for final layers
             starters = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
             enders = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
         else:
@@ -910,7 +1081,7 @@ elif rank==1:  # FovealNet process
         predictions = []
         total_sequence_time = 0
         num_images = 0
-        layer_times = [0] * (len(model.transformer_layers) + 2) if args.foveal_layer_timer else None
+        layer_times = [0] * (args.final_layer + 2) if args.foveal_layer_timer else None
 
         local_predictions_buffer = np.zeros((150, 2), dtype=np.float32) 
         local_fovealnet_level_buffer = np.zeros(150, dtype=np.int32)
@@ -965,7 +1136,7 @@ elif rank==1:  # FovealNet process
                     print(f"Layer {i} (transformer block): {starters[i].elapsed_time(enders[i]):.2f} ms")
             prediction = output.cpu().numpy()[0]
             local_predictions_buffer[img_idx] = prediction  
-            local_fovealnet_level_buffer[img_idx] = 6
+            local_fovealnet_level_buffer[img_idx] = args.final_layer
             # # Send gaze prediction to Gaussian Splatting process
             # comm.Send(gaze_prediction, dest=0)
 
@@ -987,7 +1158,12 @@ elif rank==1:  # FovealNet process
 
             predictions.append((image_name, prediction))
 
-    with open('tune_layers_it%d_cpu%d_%s_fovealnet_timing.json'%(args.tune_layer_iter, args.cpucount, scene_name) , 'w') as f:
+    if args.resnet:
+        fovealnet_timing_filename = 'tune_layers_it%d_cpu%d_%s_fovealnet_timing_resnet34.json'%(args.tune_layer_iter, args.cpucount, scene_name)
+    else:
+        fovealnet_timing_filename = 'tune_layers_it%d_cpu%d_%s_fovealnet_timing.json'%(args.tune_layer_iter, args.cpucount, scene_name)
+
+    with open(fovealnet_timing_filename, 'w') as f:
         json.dump({
             'inference_times': inference_times,
             'layer_timings_per_image': layer_timings_per_image

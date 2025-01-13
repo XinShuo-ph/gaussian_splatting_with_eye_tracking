@@ -211,7 +211,8 @@ def train_model(
     num_epochs=50,
     batch_size=256,
     patience=50,  # Number of epochs to wait for improvement
-    foveated=False
+    foveated=False,
+    resnet=False
 ):
     print(device)
     model.to(device)
@@ -252,7 +253,15 @@ def train_model(
                 # loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
                 #     0.5 * criterion(outputs[1], gaze_gt_vecs) + 
                 #     criterion(outputs[2], gaze_gt_vecs) )
-                loss = ( 
+                if resnet:
+                    loss = (
+                        criterion(outputs[0], gaze_gt_vecs) * 2.0** ( 1 - n_outputs )  +
+                        criterion(outputs[1], gaze_gt_vecs) * 2.0** ( 2 - n_outputs )  +
+                        criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  + 
+                        criterion(outputs[3], gaze_gt_vecs) * 2.0** ( 4 - n_outputs )  
+                    )
+                else:
+                    loss = ( 
                     criterion(outputs[0], gaze_gt_vecs) * 2.0** ( 1 - n_outputs )  +
                     criterion(outputs[1], gaze_gt_vecs) * 2.0** ( 2 - n_outputs )  +
                     criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  + 
@@ -334,7 +343,15 @@ def train_model(
                     # loss =( 0.25 * criterion(outputs[0], gaze_gt_vecs) + 
                     #     0.5 * criterion(outputs[1], gaze_gt_vecs) + 
                     #     criterion(outputs[2], gaze_gt_vecs) )
-                    loss = ( 
+                    if resnet:
+                        loss = (
+                            criterion(outputs[0], gaze_gt_vecs) * 2.0** ( 1 - n_outputs )  +
+                            criterion(outputs[1], gaze_gt_vecs) * 2.0** ( 2 - n_outputs )  +
+                            criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  + 
+                            criterion(outputs[3], gaze_gt_vecs) * 2.0** ( 4 - n_outputs )  
+                        )
+                    else:
+                        loss = ( 
                         criterion(outputs[0], gaze_gt_vecs) * 2.0** ( 1 - n_outputs )  +
                         criterion(outputs[1], gaze_gt_vecs) * 2.0** ( 2 - n_outputs )  +
                         criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  + 
@@ -381,7 +398,10 @@ def train_model(
         writer.add_scalar("Error/Validation_Min", val_min_error, epoch)
 
         # Create a directory for the current epoch
-        epoch_dir = os.path.join("results_epoch", f"epoch_{epoch+1}")
+        if resnet:
+            epoch_dir = os.path.join("results_epoch_resnet", f"epoch_{epoch+1}")
+        else:
+            epoch_dir = os.path.join("results_epoch", f"epoch_{epoch+1}")
         if not os.path.exists(epoch_dir):
             os.makedirs(epoch_dir)
 

@@ -7,9 +7,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--tune_layer_iter", default=0, type=int) # tune the number of layers for each fovea step
 parser.add_argument("--cpucount", default=3, type=int) # number of cpus
 parser.add_argument("--scene", default='', type=str) # scene name, default is empty string
+parser.add_argument("--resnet", action='store_true') # use resnet instead of vit
 args = parser.parse_args()
 
-if args.scene == '': # in this case, read the old data (which is for truck)
+if args.resnet:
+    with open('tune_layers_it%d_cpu%d_%s_3DGS_timing_resnet34.json'%(args.tune_layer_iter, args.cpucount, args.scene), 'r') as f:
+        data = json.load(f)
+elif args.scene == '': # in this case, read the old data (which is for truck)
     with open('tune_layers_it%d_cpu%d_3DGS_timing.json'%(args.tune_layer_iter, args.cpucount), 'r') as f:
         data = json.load(f)
 else:
@@ -38,8 +42,10 @@ print('avg_step_times_first_image:\n', avg_step_times_first_image)
 
 
 # next, process the fovealnet timing data
-
-if args.scene == '': # in this case, read the old data (which is for truck)
+if args.resnet:
+    with open('tune_layers_it%d_cpu%d_%s_fovealnet_timing_resnet34.json'%(args.tune_layer_iter, args.cpucount, args.scene), 'r') as f:
+        data = json.load(f)
+elif args.scene == '': # in this case, read the old data (which is for truck)
     with open('tune_layers_it%d_cpu%d_fovealnet_timing.json'%(args.tune_layer_iter, args.cpucount), 'r') as f:
         data = json.load(f)
 else:
@@ -129,7 +135,10 @@ bar_width = 0.15
 x_positions = np.arange(1)  # Only one bar per group
 
 # also write the step-wise lapse time to file, so that I can copy to an excel
-ftxt = open('tune_layers_it%d_cpu%d_%s.txt'%(args.tune_layer_iter, args.cpucount, args.scene), 'w')
+if args.resnet:
+    ftxt = open('tune_layers_it%d_cpu%d_%s_resnet34.txt'%(args.tune_layer_iter, args.cpucount, args.scene), 'w')
+else:
+    ftxt = open('tune_layers_it%d_cpu%d_%s.txt'%(args.tune_layer_iter, args.cpucount, args.scene), 'w')
 
 ftxt.write('Steps: ')
 for labelname in ['Preprocess'] + ['round_%d'%i for i in range(1, max_rounds)] + ['idle']:
@@ -184,15 +193,25 @@ plt.gca().add_artist(first_legend)  # Add first legend back to plot
 
 colors_fovealnet = plt.cm.cool(np.linspace(0, 1, num_layers-2))
 colors_fovealnet = ['grey'] + list(colors_fovealnet) 
-labels_fovealnet = ['Embedding'] + ['ViT Layer %d'%i for i in range(1, num_layers-1)]
+if args.resnet:
+    labels_fovealnet = ['Embedding'] + ['ResNet Layer %d'%i for i in range(1, num_layers-1)]
+else:
+    labels_fovealnet = ['Embedding'] + ['ViT Layer %d'%i for i in range(1, num_layers-1)]
 
 ftxt.write('Steps: ')
-for labelname in ['Embedding'] + ['ViT_Layer_%d'%i for i in range(1, num_layers-1)]:
-    ftxt.write(labelname + ' ')
+if args.resnet:
+    for labelname in ['Embedding'] + ['ResNet_Layer_%d'%i for i in range(1, num_layers-1)]:
+        ftxt.write(labelname + ' ')
+else:
+    for labelname in ['Embedding'] + ['ViT_Layer_%d'%i for i in range(1, num_layers-1)]:
+        ftxt.write(labelname + ' ')
 ftxt.write('\n')
 
 bottom = 0
-ftxt.write('FovealNet: ')
+if args.resnet:
+    ftxt.write('ResNet: ')
+else:
+    ftxt.write('FovealNet: ')
 for i in range(num_layers-1): # the last layer is not useful because each layer already does the FC layers to output gaze prediction
     plt.bar(
         x_positions[0] + bar_width + 0.05, avg_layer_times_first_image[i], bar_width,
@@ -207,12 +226,22 @@ handles_fovealnet = [plt.Rectangle((0, 0), 1, 1, color=color) for color in color
 plt.legend(handles_fovealnet, labels_fovealnet, loc='lower right', fontsize=12)  # Add second legend
 
 # Set x-ticks to label the bars
-plt.xticks([x_positions[0], x_positions[0] + 1 * bar_width + 0.05], ['3DGS', 'FovealNet'], fontsize=16)
+if args.resnet:
+    plt.xticks([x_positions[0], x_positions[0] + 1 * bar_width + 0.05], ['3DGS', 'ResNet'], fontsize=16)
+else:
+    plt.xticks([x_positions[0], x_positions[0] + 1 * bar_width + 0.05], ['3DGS', 'FovealNet'], fontsize=16)
 plt.yticks(fontsize=16)
 plt.ylabel('Latency (ms)', fontsize=16)
-plt.ylim(0,30)
+if args.resnet:
+    plt.ylim(0,40)
+else:
+    plt.ylim(0,30)
 plt.tight_layout()
-plt.savefig('tune_layers_it%d_cpu%d_%s.png'%(args.tune_layer_iter, args.cpucount, args.scene))
-plt.savefig('tune_layers_it%d_cpu%d_%s.pdf'%(args.tune_layer_iter, args.cpucount, args.scene), bbox_inches='tight')
+if args.resnet:
+    plt.savefig('tune_layers_it%d_cpu%d_%s_resnet34.png'%(args.tune_layer_iter, args.cpucount, args.scene))
+    plt.savefig('tune_layers_it%d_cpu%d_%s_resnet34.pdf'%(args.tune_layer_iter, args.cpucount, args.scene), bbox_inches='tight')
+else:
+    plt.savefig('tune_layers_it%d_cpu%d_%s.png'%(args.tune_layer_iter, args.cpucount, args.scene))
+    plt.savefig('tune_layers_it%d_cpu%d_%s.pdf'%(args.tune_layer_iter, args.cpucount, args.scene), bbox_inches='tight')
 plt.show()
 
