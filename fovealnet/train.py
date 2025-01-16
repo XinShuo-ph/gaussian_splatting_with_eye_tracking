@@ -215,6 +215,7 @@ def parse_args():
     parser.add_argument("--train_foveated", action="store_true", help="Train with foveated images")
     parser.add_argument("--resnet", action="store_true", help="Use resnet backbone")
     parser.add_argument("--deepvog", action="store_true", help="Use deepvog model")
+    parser.add_argument("--deepvog6", action="store_true", help="Use deepvog model, the one with 6 exits")
 
     return parser.parse_args()
 
@@ -292,7 +293,7 @@ def main():
             model = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
         else:
             model = ResNetTracking(backbone_name="resnet34", top_k=1.0).to(device)
-    elif args.deepvog:
+    elif args.deepvog or args.deepvog6:
         model = DeepVOGFoveated(in_height=400,in_width=640).to(device)
     elif args.train_foveated:
         model = VisionTransformerFoveated(num_layers = 6, top_k = args.topk).to(device)
@@ -324,7 +325,8 @@ def main():
         scheduler=scheduler,
         foveated=args.train_foveated,
         resnet = args.resnet,
-        deepvog = args.deepvog
+        deepvog = args.deepvog,
+        deepvog6 = args.deepvog6
     )
 
 

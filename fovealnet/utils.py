@@ -213,7 +213,8 @@ def train_model(
     patience=50,  # Number of epochs to wait for improvement
     foveated=False,
     resnet=False,
-    deepvog = False
+    deepvog = False,
+    deepvog6 = False
 ):
     print(device)
     model.to(device)
@@ -415,6 +416,8 @@ def train_model(
             epoch_dir = os.path.join("results_epoch_resnet", f"epoch_{epoch+1}")
         elif deepvog:
             epoch_dir = os.path.join("results_epoch_deepvog", f"epoch_{epoch+1}")
+        elif deepvog6:
+            epoch_dir = os.path.join("results_epoch_deepvog6", f"epoch_{epoch+1}")
         else:
             epoch_dir = os.path.join("results_epoch", f"epoch_{epoch+1}")
         if not os.path.exists(epoch_dir):
