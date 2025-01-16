@@ -4,7 +4,7 @@ from torchvision import transforms
 from PIL import Image
 import argparse
 import os
-from timm_vit import VisionTransformer, ResNetTracking, ResNetFoveated
+from timm_vit import VisionTransformer, ResNetTracking, ResNetFoveated, DeepVOGFoveated
 import numpy as np
 from tqdm import tqdm
 import mpi4py
@@ -17,6 +17,7 @@ def parse_args():
     parser.add_argument("--layer_timer", action="store_true", help="Enable layer-wise timing")
     parser.add_argument("--cpu_infer", action="store_true", help="use CPU for inference")
     parser.add_argument("--resnet", action="store_true", help="use ResNet instead of ViT")
+    parser.add_argument("--deepvog", action="store_true", help="use DeepVOG model")
     parser.add_argument("--foveated", action="store_true", help="use foveated model")
     return parser.parse_args()
 
@@ -39,6 +40,8 @@ def main():
             model = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
         else:
             model = ResNetTracking(backbone_name="resnet34", top_k=1.0).to(device)
+    elif args.deepvog:
+        model = DeepVOGFoveated(in_height=400,in_width=640).to(device)
     else:
         model = VisionTransformer(num_layers=6, top_k=1.0).to(device)
     model.load_state_dict(torch.load(args.model_path, map_location=device))
@@ -48,6 +51,8 @@ def main():
     if args.layer_timer:
         if args.resnet:
             num_events = 6
+        elif args.deepvog:
+            num_events = 3
         else:
             num_events = len(model.transformer_layers) + 2  # +1 for patch embedding, +1 for final layers
         starters = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
@@ -61,6 +66,8 @@ def main():
     num_images = 0
     if args.resnet:
         layer_times = [0] * 6 if args.layer_timer else None
+    elif args.deepvog:
+        layer_times = [0] * 3 if args.layer_timer else None
     else:
         layer_times = [0] * (len(model.transformer_layers) + 2) if args.layer_timer else None
     

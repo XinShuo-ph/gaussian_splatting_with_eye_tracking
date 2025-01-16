@@ -8,10 +8,14 @@ parser.add_argument("--tune_layer_iter", default=0, type=int) # tune the number 
 parser.add_argument("--cpucount", default=3, type=int) # number of cpus
 parser.add_argument("--scene", default='', type=str) # scene name, default is empty string
 parser.add_argument("--resnet", action='store_true') # use resnet instead of vit
+parser.add_argument("--pruned", action='store_true') # use pruned model
 args = parser.parse_args()
 
 if args.resnet:
     with open('tune_layers_it%d_cpu%d_%s_3DGS_timing_resnet34.json'%(args.tune_layer_iter, args.cpucount, args.scene), 'r') as f:
+        data = json.load(f)
+elif args.pruned:
+    with open('tune_layers_it%d_cpu%d_%s_3DGS_timing_pruned.json'%(args.tune_layer_iter, args.cpucount, args.scene), 'r') as f:
         data = json.load(f)
 elif args.scene == '': # in this case, read the old data (which is for truck)
     with open('tune_layers_it%d_cpu%d_3DGS_timing.json'%(args.tune_layer_iter, args.cpucount), 'r') as f:
@@ -44,6 +48,9 @@ print('avg_step_times_first_image:\n', avg_step_times_first_image)
 # next, process the fovealnet timing data
 if args.resnet:
     with open('tune_layers_it%d_cpu%d_%s_fovealnet_timing_resnet34.json'%(args.tune_layer_iter, args.cpucount, args.scene), 'r') as f:
+        data = json.load(f)
+elif args.pruned:
+    with open('tune_layers_it%d_cpu%d_%s_fovealnet_timing_pruned.json'%(args.tune_layer_iter, args.cpucount, args.scene), 'r') as f:
         data = json.load(f)
 elif args.scene == '': # in this case, read the old data (which is for truck)
     with open('tune_layers_it%d_cpu%d_fovealnet_timing.json'%(args.tune_layer_iter, args.cpucount), 'r') as f:
@@ -93,6 +100,7 @@ curstep = 2 # could be idle only after render step 2 (step 0: preprocess, step 1
 render_time = avg_step_times_first_image[0] + avg_step_times_first_image[1] + avg_step_times_first_image[2]
 curfovealstep = 0
 fovealtime = avg_layer_times_first_image[0] + 0.0
+print('simulating the timing data...')
 while curstep < len(avg_step_times_first_image)-1:
     while fovealtime <= render_time and curfovealstep < num_layers-1:
         curfovealstep += 1
@@ -103,11 +111,25 @@ while curstep < len(avg_step_times_first_image)-1:
     if fovealtime < render_time:
         max_rounds = curstep+1
         break
-    idle_times[curstep] = fovealtime - render_time
-    curstep += 1
-    render_time = fovealtime + avg_step_times_first_image[curstep]
+    if fovealtime > render_time and fovealtime - avg_layer_times_first_image[curfovealstep] <= render_time - avg_step_times_first_image[curstep]:
+        # idle only if current foveal latency > current render latency, and previous foveal latency <= previous render latency
+        # i.e. last rendering receives last gaze prediction ( previous foveal latency <= previous render latency), now the rendering finishes but new gaze prediction is not ready yet (current foveal latency > current render latency)
+        idle_times[curstep] = fovealtime - render_time
+        curstep += 1
+        render_time = fovealtime + avg_step_times_first_image[curstep]
+    else:
+        curstep += 1
+        render_time += avg_step_times_first_image[curstep]
+    print('curstep:', curstep, 'curfovealstep:', curfovealstep, 'render_time:', render_time, 'fovealtime:', fovealtime, 'idle:', idle_times[curstep-1])
+    # if max_rounds:
+    # if max_rounds is defined, print it
+    if 'max_rounds' in locals():
+        print('max_rounds:', max_rounds)
+    
+
     if curstep == len(avg_step_times_first_image)-1:
         max_rounds = curstep+1
+
         
 
 print('idle_times:\n', idle_times)
@@ -137,6 +159,8 @@ x_positions = np.arange(1)  # Only one bar per group
 # also write the step-wise lapse time to file, so that I can copy to an excel
 if args.resnet:
     ftxt = open('tune_layers_it%d_cpu%d_%s_resnet34.txt'%(args.tune_layer_iter, args.cpucount, args.scene), 'w')
+elif args.pruned:
+    ftxt = open('tune_layers_it%d_cpu%d_%s_pruned.txt'%(args.tune_layer_iter, args.cpucount, args.scene), 'w')
 else:
     ftxt = open('tune_layers_it%d_cpu%d_%s.txt'%(args.tune_layer_iter, args.cpucount, args.scene), 'w')
 
@@ -240,6 +264,9 @@ plt.tight_layout()
 if args.resnet:
     plt.savefig('tune_layers_it%d_cpu%d_%s_resnet34.png'%(args.tune_layer_iter, args.cpucount, args.scene))
     plt.savefig('tune_layers_it%d_cpu%d_%s_resnet34.pdf'%(args.tune_layer_iter, args.cpucount, args.scene), bbox_inches='tight')
+elif args.pruned:
+    plt.savefig('tune_layers_it%d_cpu%d_%s_pruned.png'%(args.tune_layer_iter, args.cpucount, args.scene))
+    plt.savefig('tune_layers_it%d_cpu%d_%s_pruned.pdf'%(args.tune_layer_iter, args.cpucount, args.scene), bbox_inches='tight')
 else:
     plt.savefig('tune_layers_it%d_cpu%d_%s.png'%(args.tune_layer_iter, args.cpucount, args.scene))
     plt.savefig('tune_layers_it%d_cpu%d_%s.pdf'%(args.tune_layer_iter, args.cpucount, args.scene), bbox_inches='tight')

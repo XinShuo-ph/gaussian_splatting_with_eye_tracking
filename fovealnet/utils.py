@@ -212,7 +212,8 @@ def train_model(
     batch_size=256,
     patience=50,  # Number of epochs to wait for improvement
     foveated=False,
-    resnet=False
+    resnet=False,
+    deepvog = False
 ):
     print(device)
     model.to(device)
@@ -259,6 +260,12 @@ def train_model(
                         criterion(outputs[1], gaze_gt_vecs) * 2.0** ( 2 - n_outputs )  +
                         criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  + 
                         criterion(outputs[3], gaze_gt_vecs) * 2.0** ( 4 - n_outputs )  
+                    )
+                elif deepvog:
+                    loss = (
+                        criterion(outputs[0], gaze_gt_vecs) * 2.0** ( 1 - n_outputs )  +
+                        criterion(outputs[1], gaze_gt_vecs) * 2.0** ( 2 - n_outputs )  +
+                        criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  
                     )
                 else:
                     loss = ( 
@@ -350,6 +357,12 @@ def train_model(
                             criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  + 
                             criterion(outputs[3], gaze_gt_vecs) * 2.0** ( 4 - n_outputs )  
                         )
+                    elif deepvog:
+                        loss = (
+                            criterion(outputs[0], gaze_gt_vecs) * 2.0** ( 1 - n_outputs )  +
+                            criterion(outputs[1], gaze_gt_vecs) * 2.0** ( 2 - n_outputs )  +
+                            criterion(outputs[2], gaze_gt_vecs) * 2.0** ( 3 - n_outputs )  
+                        )
                     else:
                         loss = ( 
                         criterion(outputs[0], gaze_gt_vecs) * 2.0** ( 1 - n_outputs )  +
@@ -400,6 +413,8 @@ def train_model(
         # Create a directory for the current epoch
         if resnet:
             epoch_dir = os.path.join("results_epoch_resnet", f"epoch_{epoch+1}")
+        elif deepvog:
+            epoch_dir = os.path.join("results_epoch_deepvog", f"epoch_{epoch+1}")
         else:
             epoch_dir = os.path.join("results_epoch", f"epoch_{epoch+1}")
         if not os.path.exists(epoch_dir):

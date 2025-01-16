@@ -196,7 +196,8 @@ pix_horizon = []
 fps_avg = []
 
 # runnames = ['foveated_GPU', 'foveated', 'A3FR_renderonly', 'A3FR_GPU_CPU', 'original','AMR']
-runnames = ['original', 'foveated_GPU', 'A3FR_GPU_CPU', 'A3FR_renderonly', 'foveated', 'AMR']
+# runnames = ['original', 'foveated_GPU', 'A3FR_GPU_CPU', 'A3FR_renderonly', 'foveated', 'AMR']
+runnames = ['A3FR_GPU_CPU', 'A3FR_GPU_CPU_AMRset1', 'A3FR_GPU_CPU_AMRset2', 'A3FR_GPU_CPU_AMRset3']
 
 # 'original': original rendering with full resolution
 # 'AMR': adaptive multi-resolution rendering, but not foveation
@@ -232,7 +233,7 @@ for ratio in [  2.0/3.0 ,  1  ,  4.0/3.0  ]:
     for runidx, runname in enumerate(runnames):
         print(f"running {runname}...")
 
-        if runname == 'foveated' or runname == 'A3FR_GPU_CPU' or runname == 'A3FR_renderonly' or runname == 'foveated_GPU':
+        if runname == 'foveated' or runname == 'A3FR_GPU_CPU' or runname == 'A3FR_renderonly' or runname == 'foveated_GPU' or runname in ['A3FR_GPU_CPU_AMRset1', 'A3FR_GPU_CPU_AMRset2', 'A3FR_GPU_CPU_AMRset3']:
             gaze_x = int(pix_x*ratio/2)
             gaze_y = int(pix_y*ratio/2)
             gaze_r2 = r2_deg/fov * pix_x*ratio
@@ -240,7 +241,7 @@ for ratio in [  2.0/3.0 ,  1  ,  4.0/3.0  ]:
             gaze_r4 = r4_deg/fov * pix_x*ratio
             print(f"gaze_x: {gaze_x}, gaze_y: {gaze_y}, gaze_r2: {gaze_r2}, gaze_r3: {gaze_r3}, gaze_r4: {gaze_r4}")
 
-        if runname == 'A3FR_GPU_CPU':
+        if runname == 'A3FR_GPU_CPU' or runname == 'A3FR_GPU_CPU_AMRset1' or runname == 'A3FR_GPU_CPU_AMRset2' or runname == 'A3FR_GPU_CPU_AMRset3':
             os.system("screen -S resnet_timing -X stuff \"while true; do python track.py --cpu_infer --layer_timer; done$(printf \\\\r)\"")
 
         if runname == 'foveated_GPU':
@@ -282,6 +283,30 @@ for ratio in [  2.0/3.0 ,  1  ,  4.0/3.0  ]:
                     rendering = render(view, gaussians, pipeline, background,
                                     gaze_x=gaze_x, gaze_y=gaze_y, gaze_r2=gaze_r2, gaze_r3=gaze_r3, gaze_r4=gaze_r4,
                                     percentile_r2=args.percentile_r2, percentile_r3=args.percentile_r3, percentile_r4=args.percentile_r4,
+                                starter = starter, ender= ender, 
+                                starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
+                                test_no_render_laststep = args.test_no_render_laststep, interpolate_image = args.interp, control_level_by_r = args.control_level_by_r
+                                )["render"]
+                elif runname == 'A3FR_GPU_CPU_AMRset1':
+                    rendering = render(view, gaussians, pipeline, background,
+                                    gaze_x=gaze_x, gaze_y=gaze_y, gaze_r2=gaze_r2, gaze_r3=gaze_r3, gaze_r4=gaze_r4,
+                                    percentile_r2=0.0, percentile_r3=0.0, percentile_r4=0.0,
+                                starter = starter, ender= ender, 
+                                starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
+                                test_no_render_laststep = args.test_no_render_laststep, interpolate_image = args.interp, control_level_by_r = args.control_level_by_r
+                                )["render"]
+                elif runname == 'A3FR_GPU_CPU_AMRset2':
+                    rendering = render(view, gaussians, pipeline, background,
+                                    gaze_x=gaze_x, gaze_y=gaze_y, gaze_r2=gaze_r2, gaze_r3=gaze_r3, gaze_r4=gaze_r4,
+                                    percentile_r2=0.25, percentile_r3=0.5, percentile_r4=0.75,
+                                starter = starter, ender= ender, 
+                                starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
+                                test_no_render_laststep = args.test_no_render_laststep, interpolate_image = args.interp, control_level_by_r = args.control_level_by_r
+                                )["render"]
+                elif runname == 'A3FR_GPU_CPU_AMRset3':
+                    rendering = render(view, gaussians, pipeline, background,
+                                    gaze_x=gaze_x, gaze_y=gaze_y, gaze_r2=gaze_r2, gaze_r3=gaze_r3, gaze_r4=gaze_r4,
+                                    percentile_r2=0.5, percentile_r3=0.5, percentile_r4=0.5,
                                 starter = starter, ender= ender, 
                                 starters = [starter0, starter1, starter2, starter3, starter4], enders = [ender0, ender1, ender2, ender3, ender4],
                                 test_no_render_laststep = args.test_no_render_laststep, interpolate_image = args.interp, control_level_by_r = args.control_level_by_r

@@ -81,6 +81,8 @@ parser.add_argument("--no_competing_device", action="store_true") # do not let t
 parser.add_argument("--tune_layer_iter", default=0, type=int) # tune the number of layers for each fovea step
 parser.add_argument("--final_layer", default=6, type=int) # the final layer of fovealnet inference
 parser.add_argument("--resnet", action="store_true") # use resnet instead of vit
+parser.add_argument("--pruned", action="store_true") # use pruned model
+parser.add_argument("--top_k", default=0.8, type=float) # topk for pruning if pruned is turned on
 args = get_combined_args(parser)
 
 
@@ -272,6 +274,84 @@ class VisionTransformer(nn.Module):
         return gaze_dir
     
     def forward_timer(self, x, starters=None, enders=None, img_idx=0):
+        # self.register_hooks()
+
+        if starters is None or enders is None:
+            raise ValueError("starters and enders must be provided for timing")
+
+        starters[0].record()  # Start timing for patch embedding
+        x = self.backbone.patch_embed(x)
+        if self.backbone.pos_embed.shape[1] == 197 and x.shape[1] == 196:
+            pos_embed = self.backbone.pos_embed[:, 1:, :] 
+        else:
+            pos_embed = self.backbone.pos_embed
+        x = self.backbone.pos_drop(x + pos_embed)
+        enders[0].record()  # End timing for patch embedding
+
+        # # check time here
+        # torch.cuda.synchronize()
+        # check_time = starters[0].elapsed_time(enders[0])
+        # print(f"Patch embedding time recorded immediately after enders[0].record(): {check_time}")
+
+        for i, block in enumerate(self.transformer_layers):
+
+            # for testing, put a comm barrier here so the foveal net waits
+            if i+1>=4:
+                print("comm.Barrier() in fovealnet forward_timer, layer ", i+1)
+                # comm.Barrier()
+                time.sleep(wait_time)
+
+            starters[i+1].record()  # Start timing for this transformer block
+            x = block(x)
+            if i%2 ==1:
+                if self.score_method == "attention":
+                    attn_scores = self.attention_scores.mean(dim=-1)
+                    topk_indices = attn_scores.topk(
+                        int(self.top_k * attn_scores.size(1)), dim=1, largest=True
+                    ).indices
+                    if topk_indices.max() >= x.size(1):
+                        raise ValueError("topk_indices contains out of bounds index")
+    
+                    bs = x.size(0)
+                    batch_indices = (
+                        torch.arange(bs)
+                        .unsqueeze(-1)
+                        .expand(-1, topk_indices.size(1))
+                        .to(x.device)
+                    )
+                    informative_tokens = x[batch_indices, topk_indices]
+    
+                    x = informative_tokens
+            features = x.mean(dim=1)
+            gaze_dir = F.relu(self.fc1(features))
+            gaze_dir = F.relu(self.fc2(gaze_dir))
+            gaze_dir = F.relu(self.fc3(gaze_dir))
+            gaze_dir = self.fc4(gaze_dir)
+            # update the gaze prediction buffer   
+            local_predictions_buffer[img_idx] = gaze_dir.cpu().numpy()[0]  
+            local_fovealnet_level_buffer[img_idx] = i + 1
+            enders[i+1].record()  # End timing for this transformer block
+            # if i % 2 == 1 and self.score_method == "attention":
+            print(f"Write gaze prediction to buffer: {local_predictions_buffer[img_idx]} at level {local_fovealnet_level_buffer[img_idx]} for eye image idx {img_idx}")
+            win1.Lock(0)
+            win1.Put(local_predictions_buffer, 0)
+            win1.Unlock(0)
+
+            win2.Lock(0)
+            win2.Put(local_fovealnet_level_buffer, 0)
+            win2.Unlock(0)
+        
+        starters[len(self.transformer_layers)+1].record()  # Start timing for final layers
+        features = x.mean(dim=1)
+        gaze_dir = F.relu(self.fc1(features))
+        gaze_dir = F.relu(self.fc2(gaze_dir))
+        gaze_dir = F.relu(self.fc3(gaze_dir))
+        gaze_dir = self.fc4(gaze_dir)
+        enders[len(self.transformer_layers)+1].record()  # End timing for final layers
+
+        return gaze_dir
+    
+    def forward_timer_prune(self, x, starters=None, enders=None, img_idx=0):
         # self.register_hooks()
 
         if starters is None or enders is None:
@@ -954,6 +1034,8 @@ if rank == 0:  # Gaussian Splatting process
         local_GS_level_buffer = np.zeros(150, dtype=np.int32)
         if args.resnet:
             gaze_radii_file = "fovealnet/gaze_render_radii_it%d_resnet34.txt"%args.tune_layer_iter
+        elif args.pruned:
+            gaze_radii_file = "fovealnet/gaze_render_radii_it%d_pruned.txt"%args.tune_layer_iter
         else:
             gaze_radii_file = "fovealnet/gaze_render_radii_it%d.txt"%args.tune_layer_iter
         with torch.no_grad():
@@ -993,6 +1075,8 @@ if rank == 0:  # Gaussian Splatting process
     # Save timing data to a file
     if args.resnet:
         render_timing_filename = 'tune_layers_it%d_cpu%d_%s_3DGS_timing_resnet34.json'%(args.tune_layer_iter, args.cpucount, scene_name)
+    elif args.pruned:
+        render_timing_filename = 'tune_layers_it%d_cpu%d_%s_3DGS_timing_pruned.json'%(args.tune_layer_iter, args.cpucount, scene_name)
     else:
         render_timing_filename = 'tune_layers_it%d_cpu%d_%s_3DGS_timing.json'%(args.tune_layer_iter, args.cpucount, scene_name)
     with open(render_timing_filename, 'w') as f:
@@ -1027,6 +1111,9 @@ elif rank==1:  # FovealNet process
         torch.set_num_interop_threads(1) 
     
     current_topk = 1.0
+
+    if args.pruned:
+        current_topk = args.top_k
 
     if args.resnet:
         model = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
@@ -1103,7 +1190,10 @@ elif rank==1:  # FovealNet process
                 start_time.record()
                 
                 if args.foveal_layer_timer:
-                    output = model.forward_timer(image, starters, enders, img_idx=img_idx)
+                    if args.pruned:
+                        output = model.forward_timer_prune(image, starters, enders, img_idx=img_idx)
+                    else:
+                        output = model.forward_timer(image, starters, enders, img_idx=img_idx)
                 else:
                     output = model(image)
                 
@@ -1160,6 +1250,8 @@ elif rank==1:  # FovealNet process
 
     if args.resnet:
         fovealnet_timing_filename = 'tune_layers_it%d_cpu%d_%s_fovealnet_timing_resnet34.json'%(args.tune_layer_iter, args.cpucount, scene_name)
+    elif args.pruned:
+        fovealnet_timing_filename = 'tune_layers_it%d_cpu%d_%s_fovealnet_timing_pruned.json'%(args.tune_layer_iter, args.cpucount, scene_name)
     else:
         fovealnet_timing_filename = 'tune_layers_it%d_cpu%d_%s_fovealnet_timing.json'%(args.tune_layer_iter, args.cpucount, scene_name)
 

@@ -4,7 +4,7 @@ from utils import EdsDataset, train_model, AllEdsDataset
 from torch.optim.lr_scheduler import StepLR
 from sklearn.model_selection import train_test_split
 # from vit_model import VisionTransformer
-from timm_vit import VisionTransformer, VisionTransformerFoveated, ResNetTracking, ResNetFoveated
+from timm_vit import VisionTransformer, VisionTransformerFoveated, ResNetTracking, ResNetFoveated, DeepVOGFoveated
 import argparse
 import os
 from datetime import datetime
@@ -214,6 +214,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Random Seed")
     parser.add_argument("--train_foveated", action="store_true", help="Train with foveated images")
     parser.add_argument("--resnet", action="store_true", help="Use resnet backbone")
+    parser.add_argument("--deepvog", action="store_true", help="Use deepvog model")
 
     return parser.parse_args()
 
@@ -291,6 +292,8 @@ def main():
             model = ResNetFoveated(backbone_name="resnet34", top_k=1.0).to(device)
         else:
             model = ResNetTracking(backbone_name="resnet34", top_k=1.0).to(device)
+    elif args.deepvog:
+        model = DeepVOGFoveated(in_height=400,in_width=640).to(device)
     elif args.train_foveated:
         model = VisionTransformerFoveated(num_layers = 6, top_k = args.topk).to(device)
     else:
@@ -302,6 +305,11 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = StepLR(optimizer, step_size=10, gamma=0.8)
+
+    # load the checkpoint if the output_path exists
+    if os.path.exists(output_path):
+        model.load_state_dict(torch.load(output_path))
+        print("Model loaded from checkpoint")
 
     train_model(
         model=model,
@@ -315,7 +323,8 @@ def main():
         num_epochs=args.num_epochs,
         scheduler=scheduler,
         foveated=args.train_foveated,
-        resnet = args.resnet
+        resnet = args.resnet,
+        deepvog = args.deepvog
     )
 
 

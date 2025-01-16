@@ -695,7 +695,449 @@ class ResNetFoveated(nn.Module):
         enders[len(self.layers)+1].record()  # End timing for final layers
 
         return gaze_dir
+
+
+
+# DeepVOG, translated from keras
+
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+
+class EncodingBlock(nn.Module):
+    def __init__(self, in_channels, filter_size, filters_num, layer_num, block_type, stage, stride=1):
+        super(EncodingBlock, self).__init__()
+        
+        self.conv_name_base = f'conv_{block_type}{stage}_'
+        self.bn_name_base = f'bn_{block_type}{stage}_'
+        
+        layers = []
+        for i in range(1, layer_num + 1):
+            layers.append(nn.Conv2d(in_channels, filters_num, kernel_size=filter_size, stride=stride if i == 1 else 1, padding='same'))
+            layers.append(nn.BatchNorm2d(filters_num))
+            if i != layer_num:
+                layers.append(nn.ReLU(inplace=True))
+        layers.append(nn.ReLU(inplace=True))
+        
+        self.main_path = nn.Sequential(*layers)
+        
+        # Downsampling layer
+        self.downsample = nn.Sequential(
+            nn.Conv2d(filters_num, filters_num * 2, kernel_size=(2, 2), stride=(2, 2), padding=0),
+            nn.BatchNorm2d(filters_num * 2),
+            nn.ReLU(inplace=True)
+        )
+        
+    def forward(self, X):
+        X_main = self.main_path(X)
+        X_downed = self.downsample(X_main)
+        return X_main, X_downed
+
+
+class DecodingBlock(nn.Module):
+    def __init__(self, in_channels, concat_channels, filter_size, filters_num, layer_num, block_type, stage, stride=1, up_sampling=True):
+        super(DecodingBlock, self).__init__()
+        
+        self.conv_name_base = f'conv_{block_type}{stage}_'
+        self.bn_name_base = f'bn_{block_type}{stage}_'
+        self.up_sampling = up_sampling
+        
+        # Upsampling path
+        if self.up_sampling:
+            self.up_conv = nn.ConvTranspose2d(in_channels, filters_num, kernel_size=(2, 2), stride=(2, 2), padding=0)
+            self.up_bn = nn.BatchNorm2d(filters_num)
+            self.up_relu = nn.ReLU(inplace=True)
+        
+        # Calculate input channels for main path after concatenation
+        main_path_in_channels = filters_num + concat_channels if self.up_sampling else in_channels
+        
+        # Main path layers
+        layers_main = []
+        current_channels = main_path_in_channels
+        for i in range(1, layer_num + 1):
+            layers_main.append(nn.Conv2d(current_channels, filters_num, kernel_size=filter_size, stride=stride, padding='same'))
+            layers_main.append(nn.BatchNorm2d(filters_num))
+            if i != layer_num:
+                layers_main.append(nn.ReLU(inplace=True))
+            current_channels = filters_num
+            
+        layers_main.append(nn.ReLU(inplace=True))
+        self.main_path = nn.Sequential(*layers_main)
+        
+    def forward(self, X, X_jump):
+        if self.up_sampling:
+            X = self.up_conv(X)
+            X = self.up_bn(X)
+            X = self.up_relu(X)
+            
+            if X_jump is not None:
+                X = torch.cat([X, X_jump], dim=1)
+        
+        X = self.main_path(X)
+        return X
     
+    
+class DeepVOG_net(nn.Module):
+    def __init__(self, input_shape=(240, 320, 3), filter_size=(3,3)):
+        super(DeepVOG_net, self).__init__()
+        
+        self.input_shape = input_shape
+        self.filter_size = filter_size
+        
+        # Encoding Stream
+        self.enc_block1 = EncodingBlock(in_channels=3, filter_size=filter_size, filters_num=16, layer_num=1, block_type="down", stage=1)
+        self.enc_block2 = EncodingBlock(in_channels=32, filter_size=filter_size, filters_num=32, layer_num=1, block_type="down", stage=2)
+        self.enc_block3 = EncodingBlock(in_channels=64, filter_size=filter_size, filters_num=64, layer_num=1, block_type="down", stage=3)
+        self.enc_block4 = EncodingBlock(in_channels=128, filter_size=filter_size, filters_num=128, layer_num=1, block_type="down", stage=4)
+        
+        # # Decoding Stream
+        # self.dec_block1 = DecodingBlock(in_channels=256, concat_channels=0, filter_size=filter_size, filters_num=256, layer_num=1, block_type="up", stage=1, stride=1)
+        # self.dec_block2 = DecodingBlock(in_channels=256, concat_channels=128, filter_size=filter_size, filters_num=256, layer_num=1, block_type="up", stage=2, stride=1)
+        # self.dec_block3 = DecodingBlock(in_channels=256, concat_channels=64, filter_size=filter_size, filters_num=128, layer_num=1, block_type="up", stage=3, stride=1)
+        # self.dec_block4 = DecodingBlock(in_channels=128, concat_channels=32, filter_size=filter_size, filters_num=64, layer_num=1, block_type="up", stage=4, stride=1)
+        # self.dec_block5 = DecodingBlock(in_channels=64, concat_channels=16, filter_size=filter_size, filters_num=32, layer_num=1, block_type="up", stage=5, stride=1, up_sampling=False)
+        
+        # Decoding Stream
+        self.dec_block1 = DecodingBlock(in_channels=256, concat_channels=128, filter_size=filter_size, filters_num=256, layer_num=1, block_type="up", stage=1, stride=1)
+        self.dec_block2 = DecodingBlock(in_channels=256, concat_channels=64, filter_size=filter_size, filters_num=256, layer_num=1, block_type="up", stage=2, stride=1)
+        self.dec_block3 = DecodingBlock(in_channels=256, concat_channels=32, filter_size=filter_size, filters_num=128, layer_num=1, block_type="up", stage=3, stride=1)
+        self.dec_block4 = DecodingBlock(in_channels=128, concat_channels=16, filter_size=filter_size, filters_num=64, layer_num=1, block_type="up", stage=4, stride=1)
+        self.dec_block5 = DecodingBlock(in_channels=64, concat_channels=0, filter_size=filter_size, filters_num=32, layer_num=1, block_type="up", stage=5, stride=1, up_sampling=False)
+        
+        # Output layer
+        self.conv_out = nn.Conv2d(in_channels=32, out_channels=3, kernel_size=(1,1), stride=1, padding=0)
+        self.softmax = nn.Softmax(dim=1)
+        
+    def forward(self, X):
+        # Encoding Stream
+        X_jump1, X_out = self.enc_block1(X)
+        X_jump2, X_out = self.enc_block2(X_out)
+        X_jump3, X_out = self.enc_block3(X_out)
+        X_jump4, X_out = self.enc_block4(X_out)
+        
+        # Decoding Stream
+        X_out = self.dec_block1(X_out, None)      # No skip connection for the first decoding block
+        X_out = self.dec_block2(X_out, X_jump4)
+        X_out = self.dec_block3(X_out, X_jump3)
+        X_out = self.dec_block4(X_out, X_jump2)
+        X_out = self.dec_block5(X_out, X_jump1)
+        
+        # Output layer
+        X_out = self.conv_out(X_out)
+        X_out = self.softmax(X_out)
+        
+        return X_out
+
+
+
+class DeepVOGFoveated(nn.Module):
+    def __init__(
+        self,
+        backbone_name="DeepVOG_net",
+        pretrained=False,  # DeepVOG_net may not have pretrained weights
+        in_channels=3,
+        in_height=400,
+        in_width=640,
+        in_filter_size=(3, 3),
+        # num_layers=4,  # Number of encoding blocks to use (typically 4 for enc_block1 to enc_block4)
+        top_k=1.0,
+        prune_ratio=0.0,
+        target_prune_ratio=0.5,
+        prune_step=0.05,
+        score_method="feature_map",
+    ):
+        super(DeepVOGFoveated, self).__init__()
+
+        # # Initialize DeepVOG backbone
+        # self.backbone = DeepVOG_net(
+        #     input_shape=(in_height, in_width, in_channels),
+        #     filter_size=in_filter_size
+        # )
+
+        filter_size = in_filter_size
+        input_shape = (in_height, in_width, in_channels)
+        
+        self.input_shape = input_shape
+        self.filter_size = filter_size
+        
+        # Encoding Stream
+        self.enc_block1 = EncodingBlock(in_channels=3, filter_size=filter_size, filters_num=16, layer_num=1, block_type="down", stage=1)
+        self.enc_block2 = EncodingBlock(in_channels=32, filter_size=filter_size, filters_num=32, layer_num=1, block_type="down", stage=2)
+        self.enc_block3 = EncodingBlock(in_channels=64, filter_size=filter_size, filters_num=64, layer_num=1, block_type="down", stage=3)
+        self.enc_block4 = EncodingBlock(in_channels=128, filter_size=filter_size, filters_num=128, layer_num=1, block_type="down", stage=4)
+        
+        # Decoding Stream
+        self.dec_block1 = DecodingBlock(in_channels=256, concat_channels=128, filter_size=filter_size, filters_num=256, layer_num=1, block_type="up", stage=1, stride=1)
+        self.dec_block2 = DecodingBlock(in_channels=256, concat_channels=64, filter_size=filter_size, filters_num=256, layer_num=1, block_type="up", stage=2, stride=1)
+        self.dec_block3 = DecodingBlock(in_channels=256, concat_channels=32, filter_size=filter_size, filters_num=128, layer_num=1, block_type="up", stage=3, stride=1)
+        self.dec_block4 = DecodingBlock(in_channels=128, concat_channels=16, filter_size=filter_size, filters_num=64, layer_num=1, block_type="up", stage=4, stride=1)
+        self.dec_block5 = DecodingBlock(in_channels=64, concat_channels=0, filter_size=filter_size, filters_num=32, layer_num=1, block_type="up", stage=5, stride=1, up_sampling=False)
+        
+        # Output layer
+        self.conv_out = nn.Conv2d(in_channels=32, out_channels=3, kernel_size=(1,1), stride=1, padding=0)
+        self.softmax = nn.Softmax(dim=1)
+        
+
+         # Define fully connected layers for each exit point
+        backbone_output_dim_enc = 256  # After enc_block4
+        backbone_output_dim_dec = 32   # After dec_block5
+        backbone_output_dim_out = 3    # After conv_out
+
+        # Exit after Encoding Stream
+        self.fc_enc = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(backbone_output_dim_enc, 512),
+            # nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            # nn.ReLU(inplace=True),
+            nn.Linear(256, 128),
+            # nn.ReLU(inplace=True),
+            nn.Linear(128, 2)
+        )
+
+        # Exit after Decoding Stream
+        self.fc_dec = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(backbone_output_dim_dec, 512),
+            # nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            # nn.ReLU(inplace=True),
+            nn.Linear(256, 128),
+            # nn.ReLU(inplace=True),
+            nn.Linear(128, 2)
+        )
+
+        # Exit after Output Layer
+        self.fc_out = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(backbone_output_dim_out, 512),
+            # nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            # nn.ReLU(inplace=True),
+            nn.Linear(256, 128),
+            # nn.ReLU(inplace=True),
+            nn.Linear(128, 2)
+        )
+
+        # Pruning and Scoring Parameters
+        # self.top_k = top_k
+        # self.score_method = score_method
+        # self.prune_ratio = prune_ratio
+        # self.prune_step = prune_step
+        # self.target_prune_ratio = target_prune_ratio
+
+    def forward(self, X):
+
+        # input image is only 1 channel, so we need to repeat it to 3 channels
+        X = X.repeat(1, 3, 1, 1)
+
+        gaze_outputs = []
+        
+        # Encoding Stream
+        X_jump1, X_out = self.enc_block1(X)
+        X_jump2, X_out = self.enc_block2(X_out)
+        X_jump3, X_out = self.enc_block3(X_out)
+        X_jump4, X_out = self.enc_block4(X_out)
+
+
+        gaze_enc = self.fc_enc(X_out)
+        gaze_outputs.append(gaze_enc)
+
+        
+        # Decoding Stream
+        X_out = self.dec_block1(X_out, X_jump4)      
+        X_out = self.dec_block2(X_out, X_jump3)
+        X_out = self.dec_block3(X_out, X_jump2)
+        X_out = self.dec_block4(X_out, X_jump1)
+        X_out = self.dec_block5(X_out, None)
+        
+
+        gaze_dec = self.fc_dec(X_out)
+        gaze_outputs.append(gaze_dec)
+
+        # Output layer
+        X_out = self.conv_out(X_out)
+        X_out = self.softmax(X_out)
+
+        gaze_out = self.fc_out(X_out)
+        gaze_outputs.append(gaze_out)
+        
+        # Stack all gaze outputs
+        gaze_outputs = torch.stack(gaze_outputs)  # Shape: [3, batch_size, 2]
+
+        return gaze_outputs
+
+    def forward_timer(self, X, starters=None, enders=None):
+        if starters is None or enders is None:
+            raise ValueError("starters and enders must be provided for timing")
+        
+        X = X.repeat(1, 3, 1, 1)
+
+        starters[0].record()  
+
+        # Encoding Stream 
+        X_jump1, X_out = self.enc_block1(X)
+        X_jump2, X_out = self.enc_block2(X_out)
+        X_jump3, X_out = self.enc_block3(X_out)
+        X_jump4, X_out = self.enc_block4(X_out)
+        # Decoding Stream
+        X_out = self.dec_block1(X_out, X_jump4)      
+        X_out = self.dec_block2(X_out, X_jump3)
+
+        enders[0].record()   
+
+        starters[1].record()
+        
+        X_out = self.dec_block3(X_out, X_jump2)
+        X_out = self.dec_block4(X_out, X_jump1)
+        X_out = self.dec_block5(X_out, None)
+
+        enders[1].record()
+
+        starters[2].record()
+
+        
+        # Output layer
+        X_out = self.conv_out(X_out)
+        X_out = self.softmax(X_out)
+
+        gaze_out = self.fc_out(X_out)
+
+        enders[2].record()
+
+        return gaze_out
+        
+
+        
+    
+    # def forward_legacy(self, X):
+
+    #     # input image is only 1 channel, so we need to repeat it to 3 channels
+    #     X = X.repeat(1, 3, 1, 1)
+
+    #     gaze_outputs = []
+        
+    #     # Encoding Stream
+    #     X_jump1, X_out = self.backbone.enc_block1(X)
+    #     X_jump2, X_out = self.backbone.enc_block2(X_out)
+    #     X_jump3, X_out = self.backbone.enc_block3(X_out)
+    #     X_jump4, X_out = self.backbone.enc_block4(X_out)
+
+    #     # print("X_out shape:", X_out.shape)
+    #     # print("X_jump4 shape:", X_jump4.shape)
+    #     # print("X_jump3 shape:", X_jump3.shape)
+    #     # print("X_jump2 shape:", X_jump2.shape)
+    #     # print("X_jump1 shape:", X_jump1.shape)
+
+    #     gaze_enc = self.fc_enc(X_out)
+    #     # print("gaze_enc shape:", gaze_enc.shape)
+    #     gaze_outputs.append(gaze_enc)
+
+        
+    #     # Decoding Stream
+    #     X_out = self.backbone.dec_block1(X_out, X_jump4)      # No skip connection for the first decoding block?
+        
+    #     # print("X_out shape:", X_out.shape)
+    #     # print("X_jump4 shape:", X_jump4.shape)
+
+    #     X_out = self.backbone.dec_block2(X_out, X_jump3)
+    #     X_out = self.backbone.dec_block3(X_out, X_jump2)
+    #     X_out = self.backbone.dec_block4(X_out, X_jump1)
+    #     X_out = self.backbone.dec_block5(X_out, None)
+        
+
+
+    #     gaze_dec = self.fc_dec(X_out)
+    #     # print("gaze_dec shape:", gaze_dec.shape)
+    #     gaze_outputs.append(gaze_dec)
+
+    #     # Output layer
+    #     X_out = self.backbone.conv_out(X_out)
+    #     X_out = self.backbone.softmax(X_out)
+
+    #     gaze_out = self.fc_out(X_out)
+    #     # print("gaze_out shape:", gaze_out.shape)
+    #     gaze_outputs.append(gaze_out)
+        
+    #     # Stack all gaze outputs
+    #     gaze_outputs = torch.stack(gaze_outputs)  # Shape: [3, batch_size, 2]
+    #     # print("gaze_outputs shape:", gaze_outputs.shape)
+
+    #     return gaze_outputs
+
+        
+
+
+    # def forward_timer(self, x, starters=None, enders=None):
+    #     if starters is None or enders is None:
+    #         raise ValueError("starters and enders must be provided for timing")
+
+    #     enc_outputs = []
+    #     gaze_outputs = []
+
+    #     # Encoding Stream with Timing
+    #     for idx, layer in enumerate(self.encoding_layers):
+    #         starters[idx].record()  # Start timing for this encoding block
+    #         x, _ = layer(x)
+    #         enders[idx].record()    # End timing for this encoding block
+    #         enc_outputs.append(x)
+
+    #     # Exit Point 1: After Encoding Stream
+    #     feat_enc = enc_outputs[-1]
+    #     starters[len(self.encoding_layers)].record()  # Start timing for FC_enc
+    #     gaze_enc = self.fc_enc(feat_enc)
+    #     enders[len(self.encoding_layers)].record()    # End timing for FC_enc
+    #     gaze_outputs.append(gaze_enc)
+
+    #     # Decoding Stream with Timing
+    #     skip_connections = enc_outputs[:-1][::-1]  # Reverse order for skip connections
+    #     for idx, layer in enumerate(self.decoding_layers):
+    #         starters[len(self.encoding_layers) + 1 + idx].record()  # Start timing for this decoding block
+    #         if idx < len(skip_connections):
+    #             x = layer(x, skip_connections[idx])
+    #         else:
+    #             x = layer(x, None)
+    #         enders[len(self.encoding_layers) + 1 + idx].record()    # End timing for this decoding block
+    #         dec_outputs = x  # Keep the latest decoding output
+
+    #     # Exit Point 2: After Decoding Stream
+    #     feat_dec = dec_outputs
+    #     starters[len(self.encoding_layers) + 1 + len(self.decoding_layers)].record()  # Start timing for FC_dec
+    #     gaze_dec = self.fc_dec(feat_dec)
+    #     enders[len(self.encoding_layers) + 1 + len(self.decoding_layers)].record()    # End timing for FC_dec
+    #     gaze_outputs.append(gaze_dec)
+
+    #     # Output Layer with Timing
+    #     starters[-1].record()  # Start timing for output layer
+    #     x = self.output_layer(x)
+    #     x = self.softmax(x)
+    #     enders[-1].record()    # End timing for output layer
+
+    #     # Exit Point 3: After Output Layer
+    #     feat_out = x
+    #     starters[-2].record()  # Start timing for FC_out
+    #     gaze_out = self.fc_out(feat_out)
+    #     enders[-2].record()    # End timing for FC_out
+    #     gaze_outputs.append(gaze_out)
+
+    #     # Stack all gaze outputs
+    #     gaze_outputs = torch.stack(gaze_outputs, dim=1)  # Shape: [batch_size, 3, 2]
+
+    #     return gaze_outputs
+
+
+
+
+# def load_DeepVOG(model_path="DeepVOG_weights.pth"):
+#     model = DeepVOG_net(input_shape=(240, 320, 3), filter_size=(10,10))
+#     model.load_state_dict(torch.load(model_path, map_location='cpu'))
+#     model.eval()
+#     return model
+
+
 
 # if __name__ == "__main__":
 #     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
