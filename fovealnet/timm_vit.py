@@ -880,6 +880,10 @@ class DeepVOGFoveated(nn.Module):
 
          # Define fully connected layers for each exit point
         backbone_output_dim_enc = 256  # After enc_block4
+        backbone_output_dim_dec_1 = 256  # After dec_block1
+        backbone_output_dim_dec_2 = 256  # After dec_block2
+        backbone_output_dim_dec_3 = 128  # After dec_block3
+        backbone_output_dim_dec_4 = 64  # After dec_block4
         backbone_output_dim_dec = 32   # After dec_block5
         backbone_output_dim_out = 3    # After conv_out
 
@@ -896,7 +900,56 @@ class DeepVOGFoveated(nn.Module):
             nn.Linear(128, 2)
         )
 
-        # Exit after Decoding Stream
+        # Exit after Decoding Streams
+        self.fc_dec_1 = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(backbone_output_dim_dec_1, 512),
+            # nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            # nn.ReLU(inplace=True),
+            nn.Linear(256, 128),
+            # nn.ReLU(inplace=True),
+            nn.Linear(128, 2)
+        )
+
+        self.fc_dec_2 = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(backbone_output_dim_dec_2, 512),
+            # nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            # nn.ReLU(inplace=True),
+            nn.Linear(256, 128),
+            # nn.ReLU(inplace=True),
+            nn.Linear(128, 2)
+        )
+
+        self.fc_dec_3 = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(backbone_output_dim_dec_3, 512),
+            # nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            # nn.ReLU(inplace=True),
+            nn.Linear(256, 128),
+            # nn.ReLU(inplace=True),
+            nn.Linear(128, 2)
+        )
+
+        self.fc_dec_4 = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(backbone_output_dim_dec_4, 512),
+            # nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            # nn.ReLU(inplace=True),
+            nn.Linear(256, 128),
+            # nn.ReLU(inplace=True),
+            nn.Linear(128, 2)
+        )
+
+
         self.fc_dec = nn.Sequential(
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
@@ -910,17 +963,17 @@ class DeepVOGFoveated(nn.Module):
         )
 
         # Exit after Output Layer
-        self.fc_out = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(backbone_output_dim_out, 512),
-            # nn.ReLU(inplace=True),
-            nn.Linear(512, 256),
-            # nn.ReLU(inplace=True),
-            nn.Linear(256, 128),
-            # nn.ReLU(inplace=True),
-            nn.Linear(128, 2)
-        )
+        # self.fc_out = nn.Sequential(
+        #     nn.AdaptiveAvgPool2d((1, 1)),
+        #     nn.Flatten(),
+        #     nn.Linear(backbone_output_dim_out, 512),
+        #     # nn.ReLU(inplace=True),
+        #     nn.Linear(512, 256),
+        #     # nn.ReLU(inplace=True),
+        #     nn.Linear(256, 128),
+        #     # nn.ReLU(inplace=True),
+        #     nn.Linear(128, 2)
+        # )
 
         # Pruning and Scoring Parameters
         # self.top_k = top_k
@@ -948,25 +1001,41 @@ class DeepVOGFoveated(nn.Module):
 
         
         # Decoding Stream
-        X_out = self.dec_block1(X_out, X_jump4)      
+        X_out = self.dec_block1(X_out, X_jump4)    
+
+        gaze_dec_1 = self.fc_dec_1(X_out)
+        gaze_outputs.append(gaze_dec_1)
+
         X_out = self.dec_block2(X_out, X_jump3)
+
+        gaze_dec_2 = self.fc_dec_2(X_out)
+        gaze_outputs.append(gaze_dec_2)
+
         X_out = self.dec_block3(X_out, X_jump2)
+
+        gaze_dec_3 = self.fc_dec_3(X_out)
+        gaze_outputs.append(gaze_dec_3)
+
         X_out = self.dec_block4(X_out, X_jump1)
+
+        gaze_dec_4 = self.fc_dec_4(X_out)
+        gaze_outputs.append(gaze_dec_4)
+
         X_out = self.dec_block5(X_out, None)
         
 
         gaze_dec = self.fc_dec(X_out)
         gaze_outputs.append(gaze_dec)
 
-        # Output layer
-        X_out = self.conv_out(X_out)
-        X_out = self.softmax(X_out)
+        # # Output layer
+        # X_out = self.conv_out(X_out)
+        # X_out = self.softmax(X_out)
 
-        gaze_out = self.fc_out(X_out)
-        gaze_outputs.append(gaze_out)
+        # gaze_out = self.fc_out(X_out)
+        # gaze_outputs.append(gaze_out)
         
         # Stack all gaze outputs
-        gaze_outputs = torch.stack(gaze_outputs)  # Shape: [3, batch_size, 2]
+        gaze_outputs = torch.stack(gaze_outputs) # Shape: [6, batch_size, 2]
 
         return gaze_outputs
 
