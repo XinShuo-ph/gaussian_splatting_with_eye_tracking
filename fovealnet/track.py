@@ -52,7 +52,7 @@ def main():
         if args.resnet:
             num_events = 6
         elif args.deepvog:
-            num_events = 3
+            num_events = 6
         else:
             num_events = len(model.transformer_layers) + 2  # +1 for patch embedding, +1 for final layers
         starters = [torch.cuda.Event(enable_timing=True) for _ in range(num_events)]
@@ -67,7 +67,7 @@ def main():
     if args.resnet:
         layer_times = [0] * 6 if args.layer_timer else None
     elif args.deepvog:
-        layer_times = [0] * 3 if args.layer_timer else None
+        layer_times = [0] * 6 if args.layer_timer else None
     else:
         layer_times = [0] * (len(model.transformer_layers) + 2) if args.layer_timer else None
     

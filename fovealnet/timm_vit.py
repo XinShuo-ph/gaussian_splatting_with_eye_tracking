@@ -1043,41 +1043,38 @@ class DeepVOGFoveated(nn.Module):
         if starters is None or enders is None:
             raise ValueError("starters and enders must be provided for timing")
         
+
         X = X.repeat(1, 3, 1, 1)
 
-        starters[0].record()  
+        gaze_outputs = []
 
-        # Encoding Stream 
+        starters[0].record()  
+        # Encoding Stream
         X_jump1, X_out = self.enc_block1(X)
         X_jump2, X_out = self.enc_block2(X_out)
         X_jump3, X_out = self.enc_block3(X_out)
         X_jump4, X_out = self.enc_block4(X_out)
-        # Decoding Stream
-        X_out = self.dec_block1(X_out, X_jump4)      
-        X_out = self.dec_block2(X_out, X_jump3)
-
         enders[0].record()   
 
+        # Decoding Stream
         starters[1].record()
-        
-        X_out = self.dec_block3(X_out, X_jump2)
-        X_out = self.dec_block4(X_out, X_jump1)
-        X_out = self.dec_block5(X_out, None)
-
-        enders[1].record()
-
+        X_out = self.dec_block1(X_out, X_jump4)   
+        enders[1].record()    
         starters[2].record()
-
-        
-        # Output layer
-        X_out = self.conv_out(X_out)
-        X_out = self.softmax(X_out)
-
-        gaze_out = self.fc_out(X_out)
-
+        X_out = self.dec_block2(X_out, X_jump3)
         enders[2].record()
+        starters[3].record()
+        X_out = self.dec_block3(X_out, X_jump2)
+        enders[3].record()
+        starters[4].record()
+        X_out = self.dec_block4(X_out, X_jump1)
+        enders[4].record()
+        starters[5].record()
+        X_out = self.dec_block5(X_out, None)
+        gaze_dec = self.fc_dec(X_out)
+        enders[5].record()
 
-        return gaze_out
+        return gaze_dec
         
 
         

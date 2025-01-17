@@ -19,7 +19,7 @@ epoch_idx = 26
 test_folder = '/home/ubuntu/openeds/validation'
 # test_info = '/home/ubuntu/openeds/train.csv'
 test_info = '/home/ubuntu/openeds/val.csv'
-model_path = '/home/ubuntu/gaussian_splatting_with_eye_tracking/fovealnet/results_epoch/epoch_%d/model_epoch_%d.pt'%(epoch_idx, epoch_idx)
+model_path = '/home/ubuntu/gaussian_splatting_with_eye_tracking/fovealnet/results_epoch_pruned_0.2/epoch_%d/model_epoch_%d.pt'%(epoch_idx, epoch_idx)
 
 import pandas as pd
 
@@ -27,6 +27,7 @@ import pandas as pd
 test_info_df = pd.read_csv(test_info)
 
 # Filter the DataFrame for seq_name < 100 and image_name < 50
+# filtered_df = test_info_df[test_info_df['image'].apply(lambda x: int(x.split('\\')[0]) < 7000 and int(x.split('\\')[0]) >= 6400 and int(x.split('\\')[1]) < 50)]
 filtered_df = test_info_df[test_info_df['image'].apply(lambda x: int(x.split('\\')[0]) < 8900 and int(x.split('\\')[0]) >= 8300 and int(x.split('\\')[1]) < 50)]
 
 # Write the filtered DataFrame to a new CSV file
@@ -37,7 +38,7 @@ test_dataset = EdsDataset(image_folder=test_folder, info_file='train_subset.csv'
 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
 # Load the trained model
-model = VisionTransformerFoveated(num_layers=6, top_k=1.0)
+model = VisionTransformerFoveated(num_layers=6, top_k=0.8)
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.to(device)
 model.eval()
@@ -56,8 +57,12 @@ with torch.no_grad():
 errors = np.array(errors)  # Shape: (N, 6, 2)
 print("Errors shape:", errors.shape)
 # Save the errors array to a file
-os.makedirs('error_stat', exist_ok=True)
-np.save('error_stat/prediction_errors.npy', errors)
+
+# make the error_stat_pruned directory if it doesn't exist
+if not os.path.exists('error_stat_pruned'):
+    os.makedirs('error_stat_pruned')
+
+np.save('error_stat_pruned_0.2/prediction_errors.npy', errors)
 
 # plot all the 2*6 12 distributions in one plot, label layer idx and gaze x/y
 import matplotlib.pyplot as plt
@@ -82,6 +87,7 @@ ax.set_xlabel("Error Value")
 ax.set_ylabel("Density")
 ax.legend()
 plt.tight_layout()
-plt.savefig('error_stat/prediction_errors.png')
+plt.savefig('error_stat_pruned_0.2/prediction_errors.png')
 plt.show()
+
 
