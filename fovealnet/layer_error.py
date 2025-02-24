@@ -15,8 +15,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Paths to test data and model
 epoch_idx = 26
-test_folder = '/home/ubuntu/openeds/train'
-test_info = '/home/ubuntu/openeds/train.csv'
+# test_folder = '/home/ubuntu/openeds/train'
+# test_info = '/home/ubuntu/openeds/train.csv'
+test_folder = '/home/ubuntu/openeds/test'
+test_info = '/home/ubuntu/openeds/test.csv'
 model_path = '/home/ubuntu/gaussian_splatting_with_eye_tracking/fovealnet/results_epoch/epoch_%d/model_epoch_%d.pt'%(epoch_idx, epoch_idx)
 
 import pandas as pd
@@ -25,7 +27,8 @@ import pandas as pd
 test_info_df = pd.read_csv(test_info)
 
 # Filter the DataFrame for seq_name < 100 and image_name < 50
-filtered_df = test_info_df[test_info_df['image'].apply(lambda x: int(x.split('\\')[0]) < 7000 and int(x.split('\\')[0]) >= 6400 and int(x.split('\\')[1]) < 50)]
+# filtered_df = test_info_df[test_info_df['image'].apply(lambda x: int(x.split('\\')[0]) < 7000 and int(x.split('\\')[0]) >= 6400 and int(x.split('\\')[1]) < 50)]
+filtered_df = test_info_df[test_info_df['image'].apply(lambda x: int(x.split('\\')[0]) < 4700 and int(x.split('\\')[0]) >= 4500 and int(x.split('\\')[1]) < 50)]
 
 # Write the filtered DataFrame to a new CSV file
 filtered_df.to_csv('train_subset.csv', index=False)

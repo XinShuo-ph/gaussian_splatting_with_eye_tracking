@@ -11,10 +11,13 @@ errors = np.load('error_stat_resnet/prediction_errors.npy')  # Shape: (N, 6, 2)
 
 for layer_index in range(4):
 
+    
+    fac = np.exp(-layer_index/6)
+
     layer_errors = errors[:, layer_index, :]  # Shape: (N, 2)
 
     # change to degree
-    layer_errors = np.rad2deg(layer_errors)
+    layer_errors = np.rad2deg(layer_errors)*fac
 
     # Extract x and y errors
     x_errors = layer_errors[:, 0]
@@ -23,6 +26,7 @@ for layer_index in range(4):
 
     x_mean, x_std = norm.fit(x_errors)
     y_mean, y_std = norm.fit(y_errors)
+    print( '&(%.2f, %.2f) '%(x_std, y_std), end=' ')  
 
     avgstd = (x_std + y_std) / 2
 
@@ -83,16 +87,16 @@ for layer_index in range(4):
     x_pdf = norm.pdf(x_fit, x_mean, x_std)
     x_hist_ax.plot(x_fit, x_pdf, 'r--', label='Gaussian fit')
     x_hist_ax.legend( fontsize=12, loc = 'upper right')
-    print('x_mean:', x_mean)
-    print('x_std:', x_std)
+    # print('x_mean:', x_mean)
+    # print('x_std:', x_std)
 
     # Gaussian fit for y errors
     y_fit = np.linspace(ymin, ymax, 100)
     y_pdf = norm.pdf(y_fit, y_mean, y_std)
     y_hist_ax.plot(y_pdf, y_fit, 'r--', label='Gaussian fit')
     # y_hist_ax.legend()
-    print('y_mean:', y_mean)
-    print('y_std:', y_std)
+    # print('y_mean:', y_mean)
+    # print('y_std:', y_std)
 
     # Hide the spines and ticks for marginal histograms
     x_hist_ax.spines['right'].set_visible(False)
@@ -127,26 +131,26 @@ for layer_index in range(4):
     plt.savefig('error_stat_resnet/joint_distribution_layer%d.png'%(layer_index+1), bbox_inches='tight')
     plt.show()
 
-# next, plot the avg_std of all layers
-avgstds = []
-for layer_index in range(4):
-    layer_errors = errors[:, layer_index, :]  # Shape: (N, 2)
-    layer_errors = np.rad2deg(layer_errors)
-    x_errors = layer_errors[:, 0]
-    y_errors = layer_errors[:, 1]
-    x_mean, x_std = norm.fit(x_errors)
-    y_mean, y_std = norm.fit(y_errors)
-    print( '&(%.2f, %.2f) '%(x_std, y_std), end=' ')   
-    avgstd = (x_std + y_std) / 2
-    avgstds.append(avgstd)
+# # next, plot the avg_std of all layers
+# avgstds = []
+# for layer_index in range(4):
+#     layer_errors = errors[:, layer_index, :]  # Shape: (N, 2)
+#     layer_errors = np.rad2deg(layer_errors)
+#     x_errors = layer_errors[:, 0]
+#     y_errors = layer_errors[:, 1]
+#     x_mean, x_std = norm.fit(x_errors)
+#     y_mean, y_std = norm.fit(y_errors)
+#     print( '&(%.2f, %.2f) '%(x_std, y_std), end=' ')   
+#     avgstd = (x_std + y_std) / 2
+#     avgstds.append(avgstd)
 
-plt.figure().set_size_inches(10, 2)
-plt.semilogy(range(1,5),avgstds, marker='o')
-plt.ylim([0.1, 10])
-print(avgstds)
-plt.xlabel('FovealNet layers', fontsize=10)
-plt.ylabel('$\\sigma$ ($^\\circ$)', fontsize=10)
-# plt.grid()
-plt.savefig('error_stat_resnet/avg_std_layers.pdf', bbox_inches='tight')
-plt.savefig('error_stat_resnet/avg_std_layers.png', bbox_inches='tight')
-plt.show()
+# plt.figure().set_size_inches(10, 2)
+# plt.semilogy(range(1,5),avgstds, marker='o')
+# plt.ylim([0.1, 10])
+# print(avgstds)
+# plt.xlabel('FovealNet layers', fontsize=10)
+# plt.ylabel('$\\sigma$ ($^\\circ$)', fontsize=10)
+# # plt.grid()
+# plt.savefig('error_stat_resnet/avg_std_layers.pdf', bbox_inches='tight')
+# plt.savefig('error_stat_resnet/avg_std_layers.png', bbox_inches='tight')
+# plt.show()

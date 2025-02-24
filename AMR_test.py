@@ -31,6 +31,9 @@ AMR_factor = 1.5 # the factor to determine the AMR level, the higher the factor,
 pix_x = 1920
 pix_y = 1080 # override the image size
 
+xlim_view = (250,750)
+ylim_view = (600,1000)
+
 
 # same args as render.py
 parser = ArgumentParser(description="Testing script parameters")
@@ -135,32 +138,43 @@ mask = (gaussians_2d_x >= 0) & (
 gaussians_2d_x = gaussians_2d_x[mask]
 gaussians_2d_y = gaussians_2d_y[mask]
 
-plt.figure().set_size_inches(10,6)
+plt.figure().set_size_inches(8,10)
 plt.imshow(rendering.cpu().detach().numpy().transpose(1,2,0))
 # put the mesh on top of the image
-plt.axhline(0, color='r', linewidth=3, alpha=0.5, label="tiles")
+plt.axhline(0, color='r', linewidth=3, alpha=0.5, label="Tiles")
 for x in range(0,view.image_height,2**tile_level):
-    plt.axhline(x, color='r', linewidth=0.5, alpha=0.5)
+    plt.axhline(x, color='r', linewidth=3, alpha=0.5)
 
 
 for y in range(0,view.image_width,2**tile_level):
-    plt.axvline(y, color='r', linewidth=0.5, alpha=0.5)
+    plt.axvline(y, color='r', linewidth=3, alpha=0.5)
 
 # scatter the gaussians
-plt.scatter(gaussians_2d_x[0], gaussians_2d_y[0], marker='.', color='b', s=20, alpha=1, label="gaussians") 
-plt.scatter(gaussians_2d_x, gaussians_2d_y, marker='.', color='b', s=0.05, alpha=0.2)
+plt.scatter(gaussians_2d_x[0], gaussians_2d_y[0], marker='.', color='b', s=100, alpha=1, label="Gaussians") 
+plt.scatter(gaussians_2d_x, gaussians_2d_y, marker='.', color='b', s=10, alpha=0.2)
 
-plt.xlabel("horizontal pixel", fontsize=16)
-plt.ylabel("vertical pixel", fontsize=16)
-plt.xticks(fontsize=16)
-plt.yticks(fontsize=16)
+# plt.xlabel("horizontal pixel", fontsize=16)
+# plt.ylabel("vertical pixel", fontsize=16)
+# plt.xticks(fontsize=16)
+# plt.yticks(fontsize=16)
+
+# turn off x, y ticks
+plt.xticks([])
+plt.yticks([])
+
 # plt.legend(fontsize=16)
 # pute legend at top (like a title)
-plt.legend(loc='upper center', bbox_to_anchor=(0.75, 1.15), ncol=2, fontsize=16)
-plt.xlim(-1,view.image_width)
-plt.ylim(-1,view.image_height)
+plt.legend(loc='lower center', bbox_to_anchor=(0.5, -0.4), ncol=2, fontsize=28)
+# plt.xlim(-1,view.image_width)
+# plt.ylim(-1,view.image_height)
+
+plt.xlim(*xlim_view)
+plt.ylim(*ylim_view)
 plt.gca().invert_yaxis()
+
 plt.savefig("original_render_all_gaussians_view%d.png"%camera_idx, bbox_inches='tight')
+
+print("plotted all gaussians")
 
 # now count the num of gaussians on each tile
 tiles_num_x = view.image_width // 2**tile_level + 1 # from 0 to view.image_width//2**tile_level
@@ -195,29 +209,43 @@ tiles_AMRlevel[tiles_AMRlevel > 4] = 4
 tiles_AMRlevel_image[tiles_AMRlevel_image > 4] = 4
 
 # now imshow the tiles_gaussian_count, but note that each pix for tiles_gaussian_count should cover 2^tile_level pixels in previous image
-plt.figure().set_size_inches(10,6)
-plt.imshow(rendering.cpu().detach().numpy().transpose(1,2,0))
+plt.figure().set_size_inches(8,10)
+# plt.imshow(rendering.cpu().detach().numpy().transpose(1,2,0))
 
 # Overlay the tile count image with transparency and log scale
 plt.imshow(np.log10(tile_count_image+1), cmap='jet',  alpha=0.5)
 
 
 # Add colorbar to show the scale of gaussian counts
-plt.colorbar(label='$\\log_{10}$ # of gaussians')
+# plt.colorbar(label='$\\log_{10}$ # of gaussians')
 
-plt.xlabel("horizontal pixel", fontsize=16)
-plt.ylabel("vertical pixel", fontsize=16)
-plt.xticks(fontsize=16)
-plt.yticks(fontsize=16)
+# put the colorbar at the top, horizontal
+# cbar = plt.colorbar(label='$\\log_{10}$ # of gaussians', orientation='horizontal')
+cbar = plt.colorbar(orientation='horizontal')
+cbar.ax.xaxis.set_label_position('bottom')
+cbar.ax.tick_params(labelsize=20)
 
-plt.xlim(-1,view.image_width)
-plt.ylim(-1,view.image_height)
+
+
+plt.xlabel('$\\log_{10}$ # of gaussians', fontsize=32)
+# plt.ylabel("vertical pixel", fontsize=16)
+# plt.xticks(fontsize=16)
+# plt.yticks(fontsize=16)
+# turn off x, y ticks
+plt.xticks([])
+plt.yticks([])
+# plt.xlim(-1,view.image_width)
+# plt.ylim(-1,view.image_height)
+
+plt.xlim(*xlim_view)
+plt.ylim(*ylim_view)
+
 plt.gca().invert_yaxis()
 plt.savefig("original_render_tile_gaussians_view%d.pdf"%camera_idx,bbox_inches='tight' )
 
 
 # now imshow the tiles_gaussian_count, but note that each pix for tiles_gaussian_count should cover 2^tile_level pixels in previous image
-plt.figure().set_size_inches(10,6)
+plt.figure().set_size_inches(8,10)
 plt.imshow(rendering.cpu().detach().numpy().transpose(1,2,0))
 
 # Overlay the tile count image with AMR level, note that the level are discrete numbers 1,2,3,4, adjust the cmap accordingly
@@ -229,15 +257,29 @@ norm = BoundaryNorm(bounds, cmap.N)
 plt.imshow(tiles_AMRlevel_image, cmap=cmap, norm=norm, alpha=0.5)
 
 # Add colorbar to show the scale of AMR levels
-plt.colorbar(label='AMR level', ticks=[1, 2, 3, 4])
+cbar=plt.colorbar( ticks=[1, 2, 3, 4], orientation='horizontal')
+cbar.ax.xaxis.set_label_position('bottom')
 
-plt.xlabel("horizontal pixel", fontsize=16)
-plt.ylabel("vertical pixel", fontsize=16)
-plt.xticks(fontsize=16)
-plt.yticks(fontsize=16)
+cbar.ax.tick_params(labelsize=24)
 
-plt.xlim(-1,view.image_width)
-plt.ylim(-1,view.image_height)
+plt.xlabel("AMR level", fontsize=32)
+
+
+# plt.xlabel("horizontal pixel", fontsize=16)
+# plt.ylabel("vertical pixel", fontsize=16)
+# plt.xticks(fontsize=16)
+# plt.yticks(fontsize=16)
+
+# plt.xlim(-1,view.image_width)
+# plt.ylim(-1,view.image_height)
+
+# turn off x, y ticks
+plt.xticks([])
+plt.yticks([])
+
+plt.xlim(*xlim_view)
+plt.ylim(*ylim_view)
+
 plt.gca().invert_yaxis()
 plt.savefig("original_render_tile_AMR_view%d.pdf"%camera_idx,bbox_inches='tight' )
 

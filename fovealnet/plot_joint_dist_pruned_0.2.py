@@ -4,7 +4,7 @@ from scipy.stats import norm
 import os
 
 # Load the errors array from the .npy file
-errors = np.load('error_stat_pruned/prediction_errors.npy')  # Shape: (N, 6, 2)
+errors = np.load('error_stat_pruned_0.2/prediction_errors.npy')  # Shape: (N, 6, 2)
 
 # Use the 6th layer prediction errors (index 5)
 # layer_index = 5
@@ -24,6 +24,7 @@ for layer_index in range(6):
 
     x_mean, x_std = norm.fit(x_errors)
     y_mean, y_std = norm.fit(y_errors)
+    print( '&(%.2f, %.2f) '%(x_std, y_std), end=' ') 
 
     avgstd = (x_std + y_std) / 2
 
@@ -31,7 +32,6 @@ for layer_index in range(6):
     xmin, xmax = -2.5*avgstd, 2.5*avgstd
     ymin, ymax = -2.5*avgstd, 2.5*avgstd
 
-    print( '&(%.2f, %.2f) '%(x_std, y_std), end=' ') 
     # Define the number of bins
     bins = 20  # Adjust as needed for resolution
 
@@ -125,8 +125,8 @@ for layer_index in range(6):
 
     # Save and show the plot
     # plt.savefig('error_stat/joint_distribution_layer5.png', dpi=300, bbox_inches='tight')
-    plt.savefig('error_stat_pruned/joint_distribution_layer%d.pdf'%(layer_index+1), bbox_inches='tight')
-    plt.savefig('error_stat_pruned/joint_distribution_layer%d.png'%(layer_index+1), bbox_inches='tight')
+    plt.savefig('error_stat_pruned_0.2/joint_distribution_layer%d.pdf'%(layer_index+1), bbox_inches='tight')
+    plt.savefig('error_stat_pruned_0.2/joint_distribution_layer%d.png'%(layer_index+1), bbox_inches='tight')
     plt.show()
 
 # # next, plot the avg_std of all layers
@@ -149,6 +149,6 @@ for layer_index in range(6):
 # plt.xlabel('FovealNet layers', fontsize=10)
 # plt.ylabel('$\\sigma$ ($^\\circ$)', fontsize=10)
 # # plt.grid()
-# plt.savefig('error_stat_pruned/avg_std_layers.pdf', bbox_inches='tight')
-# plt.savefig('error_stat_pruned/avg_std_layers.png', bbox_inches='tight')
+# plt.savefig('error_stat_pruned_0.2/avg_std_layers.pdf', bbox_inches='tight')
+# plt.savefig('error_stat_pruned_0.2/avg_std_layers.png', bbox_inches='tight')
 # plt.show()

@@ -14,14 +14,14 @@ import numpy as np
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Paths to test data and model
-epoch_idx = 32
+epoch_idx = 26
 # test_folder = '/home/ubuntu/openeds/train'
 # test_info = '/home/ubuntu/openeds/train.csv'
 
 test_folder = '/home/ubuntu/openeds/test'
 test_info = '/home/ubuntu/openeds/test.csv'
 
-model_path = '/home/ubuntu/gaussian_splatting_with_eye_tracking/fovealnet/results_epoch_pruned/epoch_%d/model_epoch_%d.pt'%(epoch_idx, epoch_idx)
+model_path = '/home/ubuntu/gaussian_splatting_with_eye_tracking/fovealnet/results_epoch_pruned_0.2/epoch_%d/model_epoch_%d.pt'%(epoch_idx, epoch_idx)
 
 import pandas as pd
 
@@ -61,10 +61,10 @@ print("Errors shape:", errors.shape)
 # Save the errors array to a file
 
 # make the error_stat_pruned directory if it doesn't exist
-if not os.path.exists('error_stat_pruned'):
-    os.makedirs('error_stat_pruned')
+if not os.path.exists('error_stat_pruned_0.2'):
+    os.makedirs('error_stat_pruned_0.2')
 
-np.save('error_stat_pruned/prediction_errors.npy', errors)
+np.save('error_stat_pruned_0.2/prediction_errors.npy', errors)
 
 # plot all the 2*6 12 distributions in one plot, label layer idx and gaze x/y
 import matplotlib.pyplot as plt
@@ -89,5 +89,5 @@ ax.set_xlabel("Error Value")
 ax.set_ylabel("Density")
 ax.legend()
 plt.tight_layout()
-plt.savefig('error_stat_pruned/prediction_errors.png')
+plt.savefig('error_stat_pruned_0.2/prediction_errors.png')
 plt.show()

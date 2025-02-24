@@ -381,6 +381,25 @@ class VisionTransformer(nn.Module):
 
             starters[i+1].record()  # Start timing for this transformer block
             x = block(x)
+            if i%2 ==1:
+                if self.score_method == "attention":
+                    attn_scores = self.attention_scores.mean(dim=-1)
+                    topk_indices = attn_scores.topk(
+                        int(self.top_k * attn_scores.size(1)), dim=1, largest=True
+                    ).indices
+                    if topk_indices.max() >= x.size(1):
+                        raise ValueError("topk_indices contains out of bounds index")
+    
+                    bs = x.size(0)
+                    batch_indices = (
+                        torch.arange(bs)
+                        .unsqueeze(-1)
+                        .expand(-1, topk_indices.size(1))
+                        .to(x.device)
+                    )
+                    x = x[batch_indices, topk_indices]
+    
+                    # x = informative_tokens
             # output in all 6 layers, instead of only 1,3,5
             # if i % 2 == 1 and self.score_method == "attention": 
             features = x.mean(dim=1)

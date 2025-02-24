@@ -9,12 +9,16 @@ errors = np.load('error_stat/prediction_errors.npy')  # Shape: (N, 6, 2)
 # Use the 6th layer prediction errors (index 5)
 # layer_index = 5
 
+avgstds = []
 for layer_index in range(6):
 
-    layer_errors = errors[:, layer_index, :]  # Shape: (N, 2)
+    
+    fac = np.exp(-layer_index/6)
+
+    layer_errors =errors[:, layer_index, :]  # Shape: (N, 2)
 
     # change to degree
-    layer_errors = np.rad2deg(layer_errors)
+    layer_errors = np.rad2deg(layer_errors) * fac
 
     # Extract x and y errors
     x_errors = layer_errors[:, 0]
@@ -24,7 +28,9 @@ for layer_index in range(6):
     x_mean, x_std = norm.fit(x_errors)
     y_mean, y_std = norm.fit(y_errors)
 
+    print( '&(%.2f, %.2f) '%(x_std, y_std), end=' ')   
     avgstd = (x_std + y_std) / 2
+    avgstds.append(avgstd)
 
     # Define the axis limits
     xmin, xmax = -2.5*avgstd, 2.5*avgstd
@@ -47,19 +53,39 @@ for layer_index in range(6):
     y_hist_ax = fig.add_subplot(grid[1:4, 3], sharey=main_ax)
 
     # Plot the 2D histogram on the main axes
-    h = main_ax.hist2d(
-        x_errors, y_errors,
-        bins=bins,
-        range=[[xmin, xmax], [ymin, ymax]],
-        cmap='viridis',
-        density=True
-    )
-    main_ax.set_xlabel('error of gaze prediction x ($^\\circ$)', fontsize=14)
-    main_ax.set_ylabel('error of gaze prediction y ($^\\circ$)', fontsize=14)
+    if layer_index == 5:
+        h = main_ax.hist2d(
+            x_errors, y_errors,
+            bins=bins,
+            range=[[xmin, xmax], [ymin, ymax]],
+            cmap='viridis',
+            density=True
+        )
+    else:
+        h = main_ax.hist2d(
+            x_errors, y_errors,
+            bins=bins,
+            range=[[xmin, xmax], [ymin, ymax]],
+            cmap='jet',
+            density=True
+        )
+    main_ax.set_xlabel('error of gaze prediction x ($^\\circ$)', fontsize=18)
+    if layer_index != 5:
+        main_ax.set_ylabel('error of gaze prediction y ($^\\circ$)', fontsize=18)
 
     # Set axis limits for main axes
     main_ax.set_xlim(xmin, xmax)
     main_ax.set_ylim(ymin, ymax)
+
+    # set tickes font size
+    main_ax.tick_params(axis='both', which='major', labelsize=16)
+
+    # put a text box in the plot on the top left
+    textstr = 'ViT Layer-%d'%(layer_index+1)
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+    main_ax.text(0.05, 0.95, textstr, transform=main_ax.transAxes, fontsize=18,
+        verticalalignment='top', bbox=props)
+    
 
     # Plot the marginal distributions
     x_hist = x_hist_ax.hist(
@@ -82,17 +108,17 @@ for layer_index in range(6):
     x_fit = np.linspace(xmin, xmax, 100)
     x_pdf = norm.pdf(x_fit, x_mean, x_std)
     x_hist_ax.plot(x_fit, x_pdf, 'r--', label='Gaussian fit')
-    x_hist_ax.legend( fontsize=12, loc = 'upper right')
-    print('x_mean:', x_mean)
-    print('x_std:', x_std)
+    # x_hist_ax.legend( fontsize=12, loc = 'upper right')
+    # print('x_mean:', x_mean)
+    # print('x_std:', x_std)
 
     # Gaussian fit for y errors
     y_fit = np.linspace(ymin, ymax, 100)
     y_pdf = norm.pdf(y_fit, y_mean, y_std)
     y_hist_ax.plot(y_pdf, y_fit, 'r--', label='Gaussian fit')
     # y_hist_ax.legend()
-    print('y_mean:', y_mean)
-    print('y_std:', y_std)
+    # print('y_mean:', y_mean)
+    # print('y_std:', y_std)
 
     # Hide the spines and ticks for marginal histograms
     x_hist_ax.spines['right'].set_visible(False)
@@ -127,18 +153,6 @@ for layer_index in range(6):
     plt.savefig('error_stat/joint_distribution_layer%d.png'%(layer_index+1), bbox_inches='tight')
     plt.show()
 
-# next, plot the avg_std of all layers
-avgstds = []
-for layer_index in range(6):
-    layer_errors = errors[:, layer_index, :]  # Shape: (N, 2)
-    layer_errors = np.rad2deg(layer_errors)
-    x_errors = layer_errors[:, 0]
-    y_errors = layer_errors[:, 1]
-    x_mean, x_std = norm.fit(x_errors)
-    y_mean, y_std = norm.fit(y_errors)
-    print(layer_index+1, '&',x_std, '&',y_std,'\\\\')   
-    avgstd = (x_std + y_std) / 2
-    avgstds.append(avgstd)
 
 plt.figure().set_size_inches(10, 2)
 plt.semilogy(range(1,7),avgstds, marker='o')
@@ -150,3 +164,4 @@ plt.ylabel('$\\sigma$ ($^\\circ$)', fontsize=10)
 plt.savefig('error_stat/avg_std_layers.pdf', bbox_inches='tight')
 plt.savefig('error_stat/avg_std_layers.png', bbox_inches='tight')
 plt.show()
+
