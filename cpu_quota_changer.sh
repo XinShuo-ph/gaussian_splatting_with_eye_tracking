@@ -17,8 +17,18 @@ fi
 
 # start the loop
 while true; do
-    echo "50000 100000" > /sys/fs/cgroup/_cpu.slice/cpu-2.2ghz.slice/cpu.max
+    echo "150000 100000" > /sys/fs/cgroup/user.slice/cpu.max
     sleep $1
-    echo "100000 200000" > /sys/fs/cgroup/_cpu.slice/cpu-2.2ghz.slice/cpu.max
+    echo "300000 100000" > /sys/fs/cgroup/user.slice/cpu.max
     sleep $1
 done
+
+
+# while true; do
+#     echo "50000 100000" > /sys/fs/cgroup/_cpu.slice/cpu-2.2ghz.slice/cpu.max
+#     sleep $1
+#     echo "100000 100000" > /sys/fs/cgroup/_cpu.slice/cpu-2.2ghz.slice/cpu.max
+#     sleep $1
+# done
+
+# to monitor the CPU usage by slice: systemd-cgtop 
