@@ -19,7 +19,7 @@ fi
 while true; do
     echo "150000 100000" > /sys/fs/cgroup/user.slice/cpu.max
     sleep $1
-    echo "300000 100000" > /sys/fs/cgroup/user.slice/cpu.max
+    echo "max 100000" > /sys/fs/cgroup/user.slice/cpu.max
     sleep $1
 done
 
